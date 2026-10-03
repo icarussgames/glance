@@ -1,0 +1,10 @@
+# Static site. No build and no backend. Render publishes the public folder.
+services:
+  - type: web
+    name: glance
+    runtime: static
+    buildCommand: "true"
+    staticPublishPath: ./public
+    envVars:
+      - key: SKIP_INSTALL_DEPS
+        value: "true"
