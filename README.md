@@ -1,8 +1,10 @@
 # Glance
 
-A personal at-a-glance page for lists of notes. Each note has a title, an optional start date, and steps you can tick off. The open list shows overall progress, and each note shows its own count and bar.
+A personal canvas of projects. Each project is a card with its name, the current stage or milestone, and the next important date. Open a card to edit stages, descriptions, milestones, and dates.
 
-There is no account and no server. What you type stays in this browser (`localStorage`). The first visit is empty until you create a list.
+Drag empty canvas to move around. Drag a card to move that project. Pinch, or hold Ctrl (or Cmd) and scroll, to zoom. A mouse wheel zooms. A trackpad scroll pans.
+
+There is no account and no server. What you add stays in this browser (`localStorage`). The first visit is empty until you add a project.
 
 ## Run locally
 
@@ -28,10 +30,4 @@ Glance is a static site. No build step and no backend.
 
 To create the site by hand instead: **New → Static Site**, set the build command to `true`, and set the publish directory to `public`.
 
-Lists still live in each visitor's browser, not on Render.
-
-## GitHub Pages
-
-The site is published from the `public` folder by `.github/workflows/pages.yml`.
-
-https://icarussgames.github.io/glance/
+Projects still live in each visitor's browser, not on Render.

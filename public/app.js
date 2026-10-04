@@ -1,45 +1,63 @@
-// Lists live in localStorage under "glance".
-// { lists: [{ id, name, notes: [{ id, title, startDate, steps: [{ id, title, done }] }] }], activeListId }
+// Glance stores a canvas of projects in localStorage under "glance.v2".
+// {
+//   version: 2,
+//   camera: { x, y, zoom },
+//   openId,
+//   projects: [{
+//     id, name, x, y,
+//     current: null | { kind: "stage" | "milestone", id },
+//     stages: [{ id, name, description, date, milestones: [{ id, name, date }] }]
+//   }]
+// }
 
-const STORAGE_KEY = "glance";
-const STARTER_NOTES = 15;
-const STARTER_STEPS = 4;
+const STORAGE_KEY = "glance.v2";
+const MIN_ZOOM = 0.35;
+const MAX_ZOOM = 2.25;
+const GRID = 24;
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 const app = document.querySelector("#app");
 
 const ui = {
-  dialogOpen: false,
   confirmDelete: false,
-  focusId: null,
-  scrollToTop: false,
+  reveal: false,
 };
 
-let persistOk = true;
 let state = loadState();
+let pendingFocus = null;
+let gesture = null;
+let spaceDown = false;
+let blockClick = false;
+let persistTimer = 0;
+let persistOk = true;
+
+let canvas;
+let world;
+let panel;
+let empty;
+let zoomLabel;
 
 function uid() {
-  if (globalThis.crypto && typeof crypto.randomUUID === "function") {
-    return crypto.randomUUID();
-  }
+  if (globalThis.crypto && typeof crypto.randomUUID === "function") return crypto.randomUUID();
   return `id-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function emptyState() {
+  return { version: 2, camera: { x: 0, y: 0, zoom: 1 }, openId: null, projects: [] };
 }
 
 function loadState() {
   const raw = readStorage();
-  if (!raw) return { lists: [], activeListId: null };
+  if (!raw) return emptyState();
   try {
-    const next = normalize(JSON.parse(raw));
+    const parsed = JSON.parse(raw);
+    if (!parsed || parsed.version !== 2) return emptyState();
+    const next = normalize(parsed);
     const cleaned = JSON.stringify(next);
-    if (cleaned !== raw) {
-      try {
-        localStorage.setItem(STORAGE_KEY, cleaned);
-      } catch (err) {
-        persistOk = false;
-      }
-    }
+    if (cleaned !== raw) writeStorage(cleaned);
     return next;
   } catch (err) {
-    return { lists: [], activeListId: null };
+    return emptyState();
   }
 }
 
@@ -52,109 +70,224 @@ function readStorage() {
   }
 }
 
-function normalize(raw) {
-  const lists = [];
-  const source = raw && Array.isArray(raw.lists) ? raw.lists : [];
-  for (const list of source) {
-    if (!list || typeof list.id !== "string") continue;
-    const notes = [];
-    if (Array.isArray(list.notes)) {
-      for (const note of list.notes) {
-        if (!note || typeof note.id !== "string") continue;
-        const steps = [];
-        if (Array.isArray(note.steps)) {
-          for (const step of note.steps) {
-            if (!step || typeof step.id !== "string") continue;
-            steps.push({
-              id: step.id,
-              title: typeof step.title === "string" ? step.title : "",
-              done: step.done === true,
-            });
-          }
-        }
-        notes.push({
-          id: note.id,
-          title: typeof note.title === "string" ? note.title : "",
-          startDate: validDate(note.startDate),
-          steps,
-        });
-      }
-    }
-    const name = typeof list.name === "string" ? list.name : "";
-    lists.push({ id: list.id, name, notes });
-  }
-  let activeListId = raw && typeof raw.activeListId === "string" ? raw.activeListId : null;
-  if (!lists.some((list) => list.id === activeListId)) {
-    activeListId = lists[0] ? lists[0].id : null;
-  }
-  return { lists, activeListId };
+function writeStorage(value) {
+  localStorage.setItem(STORAGE_KEY, value);
+}
+
+function finite(value, fallback) {
+  const number = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(number) ? number : fallback;
 }
 
 function validDate(value) {
   return typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : null;
 }
 
-function persist() {
+function clamp(number, min, max) {
+  return Math.min(max, Math.max(min, number));
+}
+
+function normalize(raw) {
+  const projects = [];
+  const seen = new Set();
+  const source = Array.isArray(raw.projects) ? raw.projects : [];
+  for (const project of source) {
+    if (!project || typeof project.id !== "string" || seen.has(project.id)) continue;
+    seen.add(project.id);
+    const stages = [];
+    if (Array.isArray(project.stages)) {
+      for (const stage of project.stages) {
+        if (!stage || typeof stage.id !== "string") continue;
+        const milestones = [];
+        if (Array.isArray(stage.milestones)) {
+          for (const milestone of stage.milestones) {
+            if (!milestone || typeof milestone.id !== "string") continue;
+            milestones.push({
+              id: milestone.id,
+              name: typeof milestone.name === "string" ? milestone.name : "",
+              date: validDate(milestone.date),
+            });
+          }
+        }
+        stages.push({
+          id: stage.id,
+          name: typeof stage.name === "string" ? stage.name : "",
+          description: typeof stage.description === "string" ? stage.description : "",
+          date: validDate(stage.date),
+          milestones,
+        });
+      }
+    }
+    const current = normalizeCurrent(project.current, stages);
+    projects.push({
+      id: project.id,
+      name: typeof project.name === "string" ? project.name : "",
+      x: finite(project.x, 0),
+      y: finite(project.y, 0),
+      current,
+      stages,
+    });
+  }
+  const camera = raw.camera || {};
+  let openId = typeof raw.openId === "string" ? raw.openId : null;
+  if (!projects.some((project) => project.id === openId)) openId = null;
+  return {
+    version: 2,
+    camera: {
+      x: finite(camera.x, 0),
+      y: finite(camera.y, 0),
+      zoom: clamp(finite(camera.zoom, 1), MIN_ZOOM, MAX_ZOOM),
+    },
+    openId,
+    projects,
+  };
+}
+
+function normalizeCurrent(current, stages) {
+  if (!current || (current.kind !== "stage" && current.kind !== "milestone") || typeof current.id !== "string") {
+    return null;
+  }
+  if (current.kind === "stage" && stages.some((stage) => stage.id === current.id)) {
+    return { kind: "stage", id: current.id };
+  }
+  if (current.kind === "milestone") {
+    for (const stage of stages) {
+      if (stage.milestones.some((milestone) => milestone.id === current.id)) {
+        return { kind: "milestone", id: current.id };
+      }
+    }
+  }
+  return null;
+}
+
+function persistNow() {
+  clearTimeout(persistTimer);
+  persistTimer = 0;
   const wasOk = persistOk;
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    writeStorage(JSON.stringify(state));
     persistOk = true;
   } catch (err) {
     persistOk = false;
   }
-  if (wasOk === persistOk) return;
-  const existing = app.querySelector(".warning");
-  if (!persistOk && !existing) {
-    const message = document.createElement("p");
-    message.className = "warning";
-    message.setAttribute("role", "alert");
-    message.textContent = "This browser blocked saving. Your changes will disappear on reload.";
-    app.querySelector(".wrap").append(message);
-  } else if (persistOk && existing) {
-    existing.remove();
+  const warning = document.querySelector(".warning");
+  if (warning && wasOk !== persistOk) warning.hidden = persistOk;
+}
+
+function persistSoon() {
+  clearTimeout(persistTimer);
+  persistTimer = setTimeout(persistNow, 120);
+}
+
+function refreshFromStorage() {
+  if (gesture) return;
+  if (persistTimer) persistNow();
+  const raw = readStorage();
+  if (raw === JSON.stringify(state)) return;
+  try {
+    const parsed = raw ? JSON.parse(raw) : null;
+    state = parsed && parsed.version === 2 ? normalize(parsed) : emptyState();
+  } catch (err) {
+    return;
   }
+  ui.confirmDelete = false;
+  render();
 }
 
-function activeList() {
-  return state.lists.find((list) => list.id === state.activeListId) || null;
+function findProject(id) {
+  return state.projects.find((project) => project.id === id) || null;
 }
 
-function findNote(noteId) {
-  const list = activeList();
-  if (!list) return null;
-  return list.notes.find((note) => note.id === noteId) || null;
+function activeProject() {
+  return findProject(state.openId);
 }
 
-function findStep(noteId, stepId) {
-  const note = findNote(noteId);
-  if (!note) return null;
-  return note.steps.find((step) => step.id === stepId) || null;
+function findStage(project, stageId) {
+  return project.stages.find((stage) => stage.id === stageId) || null;
 }
 
-function listLabel(list) {
-  const name = list.name.trim();
-  return name || "Untitled list";
-}
-
-function countDone(steps) {
-  return steps.reduce((sum, step) => sum + (step.done ? 1 : 0), 0);
-}
-
-function listStats(list) {
-  let done = 0;
-  let steps = 0;
-  for (const note of list.notes) {
-    steps += note.steps.length;
-    done += countDone(note.steps);
+function findMilestone(project, milestoneId) {
+  for (const stage of project.stages) {
+    const milestone = stage.milestones.find((item) => item.id === milestoneId);
+    if (milestone) return milestone;
   }
-  return { notes: list.notes.length, done, steps };
+  return null;
 }
 
-function summaryText(stats) {
-  const notes = stats.notes === 1 ? "1 note" : `${stats.notes} notes`;
-  if (stats.steps === 0) return `${notes} · No steps yet`;
-  const steps = stats.steps === 1 ? "1 step" : `${stats.steps} steps`;
-  return `${notes} · ${stats.done} of ${steps}`;
+function cardEl(id) {
+  const nodes = world.querySelectorAll(".card");
+  for (const node of nodes) if (node.dataset.projectId === id) return node;
+  return null;
+}
+
+function todayISO() {
+  const now = new Date();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${now.getFullYear()}-${month}-${day}`;
+}
+
+function formatDate(iso) {
+  const [year, month, day] = iso.split("-").map(Number);
+  return `${MONTHS[month - 1]} ${day}, ${year}`;
+}
+
+function currentInfo(project) {
+  if (!project.current) return null;
+  if (project.current.kind === "stage") {
+    const stage = findStage(project, project.current.id);
+    if (!stage) return null;
+    return { label: stage.name.trim() || "Untitled stage" };
+  }
+  for (const stage of project.stages) {
+    const milestone = stage.milestones.find((item) => item.id === project.current.id);
+    if (milestone) return { label: milestone.name.trim() || "Untitled milestone" };
+  }
+  return null;
+}
+
+function datedItems(project) {
+  const items = [];
+  for (const stage of project.stages) {
+    const stageLabel = stage.name.trim() || "Stage";
+    if (stage.date) items.push({ date: stage.date, label: stageLabel });
+    for (const milestone of stage.milestones) {
+      if (!milestone.date) continue;
+      items.push({ date: milestone.date, label: milestone.name.trim() || stageLabel });
+    }
+  }
+  return items;
+}
+
+function nextDate(project) {
+  const items = datedItems(project);
+  if (!items.length) return null;
+  const today = todayISO();
+  const upcoming = items.filter((item) => item.date >= today).sort((a, b) => a.date.localeCompare(b.date));
+  if (upcoming.length) return upcoming[0];
+  return items.sort((a, b) => b.date.localeCompare(a.date))[0];
+}
+
+function summary(project) {
+  const current = currentInfo(project);
+  const date = nextDate(project);
+  const name = project.name.trim() || "Untitled project";
+  let dateLine = "No date";
+  if (date) {
+    const formatted = formatDate(date.date);
+    dateLine = current && date.label === current.label ? formatted : `${formatted} · ${date.label}`;
+  }
+  const currentLine = current ? current.label : project.stages.length ? "No current stage" : "No stages yet";
+  return {
+    name,
+    nameEmpty: !project.name.trim(),
+    current: currentLine,
+    currentSet: Boolean(current),
+    date: dateLine,
+    datePlaceholder: !date,
+    currentPlaceholder: !current,
+    aria: `${name}. ${currentLine}. ${dateLine}.`,
+  };
 }
 
 function esc(value) {
@@ -166,227 +299,158 @@ function esc(value) {
     .replace(/'/g, "&#39;");
 }
 
-function percent(done, total) {
-  if (total === 0) return 0;
-  return Math.round((done / total) * 1000) / 10;
-}
-
-function progressBar(done, total, label) {
-  return `<div class="bar" role="progressbar" aria-valuemin="0" aria-valuemax="${total}" aria-valuenow="${done}" aria-label="${esc(label)}"><span style="width:${percent(done, total)}%"></span></div>`;
-}
-
-function starterNotes() {
-  const notes = [];
-  for (let i = 1; i <= STARTER_NOTES; i += 1) {
-    const steps = [];
-    for (let s = 0; s < STARTER_STEPS; s += 1) {
-      steps.push({ id: uid(), title: "", done: false });
-    }
-    notes.push({ id: uid(), title: `Note ${i}`, startDate: null, steps });
-  }
-  return notes;
-}
-
-function view() {
-  const list = activeList();
+function cardHtml(project) {
+  const info = summary(project);
+  const open = state.openId === project.id;
   return `
-    <a class="skip" href="#notes">Skip to notes</a>
-    <div class="wrap">
-      <div class="sticky">
-        ${header()}
-        ${list ? summary(list) : ""}
-      </div>
-      <main id="notes">
-        ${list ? notesView(list) : emptyView()}
-      </main>
-      ${persistOk ? "" : `<p class="warning" role="alert">This browser blocked saving. Your changes will disappear on reload.</p>`}
-    </div>
-    ${ui.dialogOpen ? dialog() : ""}
-  `;
-}
-
-function header() {
-  return `
-    <header class="mast">
-      <h1 class="wordmark">Glance</h1>
-      <button type="button" class="button" data-action="open-dialog" data-focus-id="open-dialog-header">New list</button>
-    </header>
-  `;
-}
-
-function emptyView() {
-  return `
-    <div class="empty">
-      <h2>No lists yet</h2>
-      <p>Create a list, then add notes and tick off steps. Progress stays on this screen, in this browser.</p>
-      <button type="button" class="button" data-action="open-dialog" data-focus-id="open-dialog-empty">Create a list</button>
-    </div>
-  `;
-}
-
-function summary(list) {
-  const stats = listStats(list);
-  const complete = stats.steps > 0 && stats.done === stats.steps;
-  return `
-    <section aria-label="Open list">
-      ${switcher()}
-      <input class="list-name" type="text" data-field="list-name" data-list-id="${esc(list.id)}" data-focus-id="list-name" value="${esc(list.name)}" placeholder="List name" aria-label="List name" maxlength="120" autocomplete="off">
-      <p class="summary-meta${complete ? " is-complete" : ""}">${esc(summaryText(stats))}</p>
-      ${progressBar(stats.done, stats.steps, "List progress")}
-    </section>
-  `;
-}
-
-function switcher() {
-  if (state.lists.length < 2) return "";
-  const options = state.lists
-    .map((list) => {
-      const selected = list.id === state.activeListId ? " selected" : "";
-      return `<option value="${esc(list.id)}"${selected}>${esc(listLabel(list))}</option>`;
-    })
-    .join("");
-  return `
-    <label class="switcher">
-      <span>Open list</span>
-      <select id="open-list" data-field="open-list">${options}</select>
-    </label>
-  `;
-}
-
-function notesView(list) {
-  const notes = list.notes.length
-    ? list.notes.map(noteCard).join("")
-    : `<p class="quiet">No notes yet.</p>`;
-  return `
-    <div class="notes">${notes}</div>
-    <div class="list-actions">
-      <button type="button" class="button button-quiet" data-action="add-note">Add note</button>
-      ${deleteListControl()}
-    </div>
-  `;
-}
-
-function deleteListControl() {
-  if (!ui.confirmDelete) {
-    return `<button type="button" class="text-button danger" data-action="ask-delete-list" data-focus-id="ask-delete-list">Delete list</button>`;
-  }
-  return `
-    <div class="confirm">
-      <p>Delete this list and its notes?</p>
-      <button type="button" class="button button-danger" data-action="confirm-delete-list" data-focus-id="confirm-delete-list">Delete list</button>
-      <button type="button" class="button button-quiet" data-action="cancel-delete-list">Cancel</button>
-    </div>
-  `;
-}
-
-function noteCard(note) {
-  const done = countDone(note.steps);
-  const total = note.steps.length;
-  const complete = total > 0 && done === total;
-  const count = total === 0 ? "0 steps" : `${done}/${total}`;
-  const label = note.title.trim() ? `Progress for ${note.title}` : "Note progress";
-  const steps = note.steps.map((step) => stepRow(note, step)).join("");
-  return `
-    <article class="note">
-      <div class="note-head">
-        <input class="note-title" type="text" data-field="note-title" data-note-id="${esc(note.id)}" data-focus-id="note-title-${esc(note.id)}" value="${esc(note.title)}" placeholder="Note title" aria-label="Note title" maxlength="160" autocomplete="off">
-        <p class="count${complete ? " is-complete" : ""}">${esc(count)}</p>
-      </div>
-      ${progressBar(done, total, label)}
-      <div class="date-row">
-        <label class="date-label">
-          <span>Start date</span>
-          <input type="date" data-field="start-date" data-note-id="${esc(note.id)}" data-focus-id="note-date-${esc(note.id)}" value="${note.startDate ? esc(note.startDate) : ""}">
-        </label>
-        <button type="button" class="text-button" data-action="clear-date" data-note-id="${esc(note.id)}"${note.startDate ? "" : " hidden"}>Clear date</button>
-      </div>
-      ${steps ? `<div class="steps">${steps}</div>` : ""}
-      <div class="note-actions">
-        <button type="button" class="text-button" data-action="add-step" data-note-id="${esc(note.id)}" data-focus-id="add-step-${esc(note.id)}">Add step</button>
-        <button type="button" class="text-button danger" data-action="delete-note" data-note-id="${esc(note.id)}">Delete note</button>
-      </div>
+    <article class="card${open ? " is-open" : ""}${info.currentSet ? " has-current" : ""}"
+      data-project-id="${esc(project.id)}"
+      data-focus-id="card-${esc(project.id)}"
+      style="transform: translate(${project.x}px, ${project.y}px)"
+      role="button" tabindex="0"
+      aria-expanded="${open ? "true" : "false"}"
+      aria-label="${esc(info.aria)}">
+      <p class="card-name${info.nameEmpty ? " is-placeholder" : ""}">${esc(info.name)}</p>
+      <p class="card-current">
+        <span class="dot" aria-hidden="true"${info.currentSet ? "" : " hidden"}></span>
+        <span class="card-current-text${info.currentPlaceholder ? " is-placeholder" : ""}">${esc(info.current)}</span>
+      </p>
+      <p class="card-date${info.datePlaceholder ? " is-placeholder" : ""}">${esc(info.date)}</p>
     </article>
   `;
 }
 
-function stepRow(note, step) {
-  const doneLabel = step.title.trim() ? `Mark “${step.title}” done` : "Mark step done";
-  return `
-    <div class="step${step.done ? " is-done" : ""}">
-      <input type="checkbox" data-field="step-done" data-note-id="${esc(note.id)}" data-step-id="${esc(step.id)}" data-focus-id="step-done-${esc(step.id)}"${step.done ? " checked" : ""} aria-label="${esc(doneLabel)}">
-      <input class="step-title" type="text" data-field="step-title" data-note-id="${esc(note.id)}" data-step-id="${esc(step.id)}" data-focus-id="step-title-${esc(step.id)}" value="${esc(step.title)}" placeholder="Step" aria-label="Step title" maxlength="200" autocomplete="off">
-      <button type="button" class="icon-button" data-action="delete-step" data-note-id="${esc(note.id)}" data-step-id="${esc(step.id)}" aria-label="Delete step"><span aria-hidden="true">×</span></button>
-    </div>
-  `;
+function chip(kind, projectId, id, on) {
+  const action = kind === "stage" ? "current-stage" : "current-milestone";
+  const idAttr = kind === "stage" ? `data-stage-id="${esc(id)}"` : `data-milestone-id="${esc(id)}"`;
+  return `<button type="button" class="chip${on ? " is-on" : ""}" data-action="${action}" data-project-id="${esc(projectId)}" ${idAttr} data-focus-id="current-${kind}-${esc(id)}" aria-pressed="${on ? "true" : "false"}">${on ? "Current" : "Set current"}</button>`;
 }
 
-function dialog() {
+function milestoneHtml(project, milestone) {
+  const on = project.current && project.current.kind === "milestone" && project.current.id === milestone.id;
+  const pid = esc(project.id);
+  const mid = esc(milestone.id);
   return `
-    <div class="backdrop">
-      <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="dialog-title">
-        <form id="new-list-form" autocomplete="off">
-          <h2 id="dialog-title">New list</h2>
-          <label class="field">
-            <span>Name</span>
-            <input id="new-list-name" name="name" data-focus-id="new-list-name" required maxlength="120" placeholder="For example, Modules" autocomplete="off">
-          </label>
-          <fieldset>
-            <legend>Start from</legend>
-            <label class="choice">
-              <input type="radio" name="kind" value="blank" checked>
-              <span>
-                <span class="choice-title">Blank</span>
-                <span class="choice-hint">An empty list.</span>
-              </span>
-            </label>
-            <label class="choice">
-              <input type="radio" name="kind" value="starter">
-              <span>
-                <span class="choice-title">Starter</span>
-                <span class="choice-hint">${STARTER_NOTES} notes, ${STARTER_STEPS} empty steps each. You can add and remove notes and steps later.</span>
-              </span>
-            </label>
-          </fieldset>
-          <div class="dialog-actions">
-            <button type="button" class="button button-quiet" data-action="close-dialog">Cancel</button>
-            <button type="submit" class="button">Create list</button>
-          </div>
-        </form>
+    <div class="milestone">
+      <div class="milestone-top">
+        ${chip("milestone", project.id, milestone.id, on)}
+        <input class="milestone-name" type="text" data-field="milestone-name" data-project-id="${pid}" data-milestone-id="${mid}" data-focus-id="milestone-name-${mid}" value="${esc(milestone.name)}" placeholder="Milestone" aria-label="Milestone name" maxlength="160" autocomplete="off">
+        <button type="button" class="icon-button" data-action="delete-milestone" data-project-id="${pid}" data-milestone-id="${mid}" aria-label="Delete milestone"><span aria-hidden="true">×</span></button>
+      </div>
+      <div class="date-line">
+        <label class="date-label">
+          <span>Date</span>
+          <input type="date" data-field="milestone-date" data-project-id="${pid}" data-milestone-id="${mid}" data-focus-id="milestone-date-${mid}" value="${milestone.date ? esc(milestone.date) : ""}">
+        </label>
+        <button type="button" class="text-button" data-action="clear-milestone-date" data-project-id="${pid}" data-milestone-id="${mid}"${milestone.date ? "" : " hidden"}>Clear</button>
       </div>
     </div>
   `;
 }
 
+function stageHtml(project, stage) {
+  const stageOn = project.current && project.current.kind === "stage" && project.current.id === stage.id;
+  const milestoneOn = project.current && project.current.kind === "milestone" && stage.milestones.some((item) => item.id === project.current.id);
+  const pid = esc(project.id);
+  const sid = esc(stage.id);
+  return `
+    <article class="stage${stageOn || milestoneOn ? " is-current" : ""}">
+      <div class="stage-head">
+        <input class="stage-name" type="text" data-field="stage-name" data-project-id="${pid}" data-stage-id="${sid}" data-focus-id="stage-name-${sid}" value="${esc(stage.name)}" placeholder="Stage" aria-label="Stage name" maxlength="160" autocomplete="off">
+        ${chip("stage", project.id, stage.id, stageOn)}
+      </div>
+      <textarea class="stage-description" data-field="stage-description" data-project-id="${pid}" data-stage-id="${sid}" data-focus-id="stage-desc-${sid}" placeholder="Description" aria-label="Stage description" maxlength="4000">${esc(stage.description)}</textarea>
+      <div class="date-line">
+        <label class="date-label">
+          <span>Date</span>
+          <input type="date" data-field="stage-date" data-project-id="${pid}" data-stage-id="${sid}" data-focus-id="stage-date-${sid}" value="${stage.date ? esc(stage.date) : ""}">
+        </label>
+        <button type="button" class="text-button" data-action="clear-stage-date" data-project-id="${pid}" data-stage-id="${sid}"${stage.date ? "" : " hidden"}>Clear</button>
+      </div>
+      <div class="milestones">
+        <h3>Milestones</h3>
+        ${stage.milestones.map((milestone) => milestoneHtml(project, milestone)).join("")}
+        <button type="button" class="text-button" data-action="add-milestone" data-project-id="${pid}" data-stage-id="${sid}">Add milestone</button>
+      </div>
+      <button type="button" class="text-button danger" data-action="delete-stage" data-project-id="${pid}" data-stage-id="${sid}">Delete stage</button>
+    </article>
+  `;
+}
+
+function panelHtml(project) {
+  const info = summary(project);
+  const stages = project.stages.length
+    ? project.stages.map((stage) => stageHtml(project, stage)).join("")
+    : `<p class="quiet">No stages yet.</p>`;
+  const foot = ui.confirmDelete
+    ? `<div class="confirm">
+        <p>Delete this project and everything on it?</p>
+        <button type="button" class="button button-danger" data-action="confirm-delete-project" data-focus-id="confirm-delete-project">Delete project</button>
+        <button type="button" class="button button-quiet" data-action="cancel-delete-project">Cancel</button>
+      </div>`
+    : `<button type="button" class="text-button danger" data-action="ask-delete-project" data-focus-id="ask-delete-project">Delete project</button>`;
+  return `
+    <div class="panel-top">
+      <input class="project-name" type="text" data-field="project-name" data-project-id="${esc(project.id)}" data-focus-id="project-name" value="${esc(project.name)}" placeholder="Project name" aria-label="Project name" maxlength="120" autocomplete="off">
+      <button type="button" class="button button-quiet" data-action="collapse">Collapse</button>
+    </div>
+    <p class="panel-glance">${esc(`${info.current} · ${info.date}`)}</p>
+    <div class="panel-body">
+      <h2>Stages</h2>
+      ${stages}
+      <button type="button" class="button button-quiet add-stage" data-action="add-stage" data-project-id="${esc(project.id)}">Add stage</button>
+    </div>
+    <div class="panel-foot">${foot}</div>
+  `;
+}
+
 function render() {
-  const scrollY = window.scrollY;
   const previous = document.activeElement;
-  const previousId = previous && previous.dataset ? previous.dataset.focusId : null;
-  const selection = readSelection(previous);
-  const requestedFocus = ui.focusId;
-  const scrollToTop = ui.scrollToTop;
-  ui.focusId = null;
-  ui.scrollToTop = false;
-
-  app.innerHTML = view();
-  document.body.classList.toggle("has-dialog", ui.dialogOpen);
-  syncTitle();
-
-  if (scrollToTop) window.scrollTo(0, 0);
-  else window.scrollTo(0, scrollY);
-
-  const targetId = requestedFocus || previousId;
-  const target = targetId ? focusElement(targetId) : null;
-  if (!target) return;
-  target.focus();
-  if (!requestedFocus && selection && typeof target.setSelectionRange === "function") {
-    try {
-      target.setSelectionRange(selection.start, selection.end);
-    } catch (err) {
-      // Date inputs do not support a text selection.
-    }
+  const previousScroll = panel.querySelector(".panel-body");
+  const scrollTop = previousScroll ? previousScroll.scrollTop : 0;
+  world.innerHTML = state.projects.map(cardHtml).join("");
+  const project = activeProject();
+  if (!project) {
+    panel.hidden = true;
+    panel.innerHTML = "";
+  } else {
+    panel.hidden = false;
+    panel.innerHTML = panelHtml(project);
+    const body = panel.querySelector(".panel-body");
+    if (body) body.scrollTop = scrollTop;
   }
-  if (requestedFocus && !target.closest(".dialog")) {
-    target.scrollIntoView({ block: "nearest" });
+  empty.hidden = state.projects.length > 0;
+  document.body.classList.toggle("panel-open", Boolean(project));
+  syncTitle();
+  applyCamera();
+  restoreFocus(previous);
+  if (ui.reveal && project) {
+    ui.reveal = false;
+    reveal(project);
+    persistNow();
+  }
+}
+
+function restoreFocus(previous) {
+  const requested = pendingFocus;
+  pendingFocus = null;
+  const previousId = previous && previous.dataset ? previous.dataset.focusId : null;
+  const id = requested || previousId;
+  if (!id) return;
+  const el = focusElement(id);
+  if (!el) return;
+  el.focus();
+  if (!requested) {
+    const selection = readSelection(previous);
+    if (selection && typeof el.setSelectionRange === "function") {
+      try {
+        el.setSelectionRange(selection.start, selection.end);
+      } catch (err) {
+        // Date inputs do not support a text selection.
+      }
+    }
+  } else if (el.closest(".panel")) {
+    el.scrollIntoView({ block: "nearest" });
   }
 }
 
@@ -402,305 +466,592 @@ function readSelection(element) {
 
 function focusElement(id) {
   const nodes = app.querySelectorAll("[data-focus-id]");
-  for (const node of nodes) {
-    if (node.dataset.focusId === id) return node;
-  }
+  for (const node of nodes) if (node.dataset.focusId === id) return node;
   return null;
 }
 
 function syncTitle() {
-  const list = activeList();
-  if (!list) {
-    document.title = "Glance";
-    return;
+  const project = activeProject();
+  document.title = project ? `Glance · ${project.name.trim() || "Untitled project"}` : "Glance";
+}
+
+function applyCamera() {
+  const camera = state.camera;
+  world.style.transform = `translate(${camera.x}px, ${camera.y}px) scale(${camera.zoom})`;
+  const size = GRID * camera.zoom;
+  canvas.style.backgroundSize = `${size}px ${size}px`;
+  canvas.style.backgroundPosition = `${camera.x}px ${camera.y}px`;
+  zoomLabel.textContent = `${Math.round(camera.zoom * 100)}%`;
+}
+
+function screenPoint(clientX, clientY) {
+  const rect = canvas.getBoundingClientRect();
+  return { x: clientX - rect.left, y: clientY - rect.top };
+}
+
+function zoomAt(sx, sy, factor) {
+  const camera = state.camera;
+  const next = clamp(camera.zoom * factor, MIN_ZOOM, MAX_ZOOM);
+  if (next === camera.zoom) return;
+  const worldX = (sx - camera.x) / camera.zoom;
+  const worldY = (sy - camera.y) / camera.zoom;
+  camera.zoom = next;
+  camera.x = sx - worldX * next;
+  camera.y = sy - worldY * next;
+  applyCamera();
+}
+
+function zoomAroundCenter(factor) {
+  const rect = canvas.getBoundingClientRect();
+  const panelWidth = panel.hidden ? 0 : panel.getBoundingClientRect().width;
+  zoomAt((rect.width - panelWidth) / 2, rect.height / 2, factor);
+  persistSoon();
+}
+
+function resetZoom() {
+  const camera = state.camera;
+  const rect = canvas.getBoundingClientRect();
+  const sx = rect.width / 2;
+  const sy = rect.height / 2;
+  const worldX = (sx - camera.x) / camera.zoom;
+  const worldY = (sy - camera.y) / camera.zoom;
+  camera.zoom = 1;
+  camera.x = sx - worldX;
+  camera.y = sy - worldY;
+  applyCamera();
+  persistNow();
+}
+
+function visibleRight() {
+  const rect = canvas.getBoundingClientRect();
+  const panelWidth = panel.hidden ? 0 : Math.min(panel.getBoundingClientRect().width, rect.width * 0.92);
+  return rect.width - panelWidth - 24;
+}
+
+function reveal(project) {
+  const el = cardEl(project.id);
+  if (!el) return;
+  const camera = state.camera;
+  const rect = canvas.getBoundingClientRect();
+  const width = el.offsetWidth * camera.zoom;
+  const height = el.offsetHeight * camera.zoom;
+  let screenX = project.x * camera.zoom + camera.x;
+  let screenY = project.y * camera.zoom + camera.y;
+  const right = visibleRight();
+  let dx = 0;
+  let dy = 0;
+  if (screenX + width > right) dx = right - (screenX + width);
+  if (screenX + dx < 16) dx = 16 - screenX;
+  if (screenY + height > rect.height - 24) dy = rect.height - 24 - (screenY + height);
+  if (screenY + dy < 72) dy = 72 - screenY;
+  if (dx === 0 && dy === 0) return;
+  camera.x += dx;
+  camera.y += dy;
+  applyCamera();
+}
+
+function placePoint() {
+  const rect = canvas.getBoundingClientRect();
+  const panelWidth = panel.hidden ? 0 : panel.getBoundingClientRect().width;
+  const camera = state.camera;
+  let x = ((rect.width - panelWidth) / 2 - camera.x) / camera.zoom - 116;
+  let y = (rect.height / 2 - camera.y) / camera.zoom - 48;
+  let step = 0;
+  while (state.projects.some((project) => Math.hypot(project.x - x, project.y - y) < 20) && step < 12) {
+    x += 28;
+    y += 28;
+    step += 1;
   }
-  const stats = listStats(list);
-  document.title = stats.steps === 0 ? "Glance" : `Glance · ${stats.done}/${stats.steps}`;
+  return { x, y };
 }
 
-function openDialog(returnFocus) {
-  ui.dialogOpen = true;
-  ui.focusId = "new-list-name";
-  ui.returnFocus = returnFocus || "open-dialog-header";
+function patchProject(project) {
+  const info = summary(project);
+  const card = cardEl(project.id);
+  if (card) {
+    card.classList.toggle("is-open", state.openId === project.id);
+    card.classList.toggle("has-current", info.currentSet);
+    card.setAttribute("aria-expanded", state.openId === project.id ? "true" : "false");
+    card.setAttribute("aria-label", info.aria);
+    const name = card.querySelector(".card-name");
+    name.textContent = info.name;
+    name.classList.toggle("is-placeholder", info.nameEmpty);
+    const current = card.querySelector(".card-current-text");
+    current.textContent = info.current;
+    current.classList.toggle("is-placeholder", info.currentPlaceholder);
+    const dot = card.querySelector(".dot");
+    if (dot) dot.hidden = !info.currentSet;
+    const date = card.querySelector(".card-date");
+    date.textContent = info.date;
+    date.classList.toggle("is-placeholder", info.datePlaceholder);
+  }
+  if (state.openId === project.id) {
+    const glance = document.querySelector(".panel-glance");
+    if (glance) glance.textContent = `${info.current} · ${info.date}`;
+    syncTitle();
+  }
+}
+
+function openProject(id) {
+  if (!findProject(id)) return;
+  state.openId = id;
+  ui.confirmDelete = false;
+  ui.reveal = true;
+  pendingFocus = "project-name";
+  persistNow();
   render();
 }
 
-function closeDialog() {
-  ui.dialogOpen = false;
-  ui.focusId = ui.returnFocus || "open-dialog-header";
+function collapse() {
+  const id = state.openId;
+  state.openId = null;
+  ui.confirmDelete = false;
+  pendingFocus = id ? `card-${id}` : null;
+  persistNow();
   render();
 }
 
-function createList(name, kind) {
-  const list = {
+function addProject() {
+  const point = placePoint();
+  const project = {
     id: uid(),
-    name,
-    notes: kind === "starter" ? starterNotes() : [],
+    name: "",
+    x: point.x,
+    y: point.y,
+    current: null,
+    stages: [],
   };
-  state.lists.push(list);
-  state.activeListId = list.id;
-  ui.dialogOpen = false;
+  state.projects.push(project);
+  state.openId = project.id;
   ui.confirmDelete = false;
-  ui.scrollToTop = true;
-  persist();
+  ui.reveal = true;
+  pendingFocus = "project-name";
+  persistNow();
   render();
 }
 
-function addNote() {
-  const list = activeList();
-  if (!list) return;
-  const note = { id: uid(), title: "", startDate: null, steps: [] };
-  list.notes.push(note);
+function addStage(projectId) {
+  const project = findProject(projectId);
+  if (!project) return;
+  const stage = { id: uid(), name: "", description: "", date: null, milestones: [] };
+  project.stages.push(stage);
+  if (!project.current) project.current = { kind: "stage", id: stage.id };
+  pendingFocus = `stage-name-${stage.id}`;
+  persistNow();
+  render();
+}
+
+function addMilestone(projectId, stageId) {
+  const project = findProject(projectId);
+  const stage = project && findStage(project, stageId);
+  if (!stage) return;
+  const milestone = { id: uid(), name: "", date: null };
+  stage.milestones.push(milestone);
+  pendingFocus = `milestone-name-${milestone.id}`;
+  persistNow();
+  render();
+}
+
+function deleteStage(projectId, stageId) {
+  const project = findProject(projectId);
+  if (!project) return;
+  project.stages = project.stages.filter((stage) => stage.id !== stageId);
+  project.current = normalizeCurrent(project.current, project.stages);
+  persistNow();
+  render();
+}
+
+function deleteMilestone(projectId, milestoneId) {
+  const project = findProject(projectId);
+  if (!project) return;
+  for (const stage of project.stages) {
+    stage.milestones = stage.milestones.filter((milestone) => milestone.id !== milestoneId);
+  }
+  project.current = normalizeCurrent(project.current, project.stages);
+  persistNow();
+  render();
+}
+
+function setCurrent(projectId, kind, id) {
+  const project = findProject(projectId);
+  if (!project) return;
+  const same = project.current && project.current.kind === kind && project.current.id === id;
+  project.current = same ? null : { kind, id };
+  pendingFocus = `current-${kind}-${id}`;
+  persistNow();
+  render();
+}
+
+function setStageDate(project, stageId, value) {
+  const stage = findStage(project, stageId);
+  if (!stage) return;
+  stage.date = validDate(value);
+  persistNow();
+  patchProject(project);
+}
+
+function setMilestoneDate(project, milestoneId, value) {
+  const milestone = findMilestone(project, milestoneId);
+  if (!milestone) return;
+  milestone.date = validDate(value);
+  persistNow();
+  patchProject(project);
+}
+
+function deleteProject() {
+  const id = state.openId;
+  state.projects = state.projects.filter((project) => project.id !== id);
+  state.openId = null;
   ui.confirmDelete = false;
-  ui.focusId = `note-title-${note.id}`;
-  persist();
+  persistNow();
   render();
-}
-
-function addStep(noteId, afterStepId) {
-  const note = findNote(noteId);
-  if (!note) return;
-  const step = { id: uid(), title: "", done: false };
-  if (afterStepId) {
-    const index = note.steps.findIndex((item) => item.id === afterStepId);
-    note.steps.splice(index === -1 ? note.steps.length : index + 1, 0, step);
-  } else {
-    note.steps.push(step);
-  }
-  ui.confirmDelete = false;
-  ui.focusId = `step-title-${step.id}`;
-  persist();
-  render();
-}
-
-function deleteNote(noteId) {
-  const list = activeList();
-  if (!list) return;
-  const index = list.notes.findIndex((note) => note.id === noteId);
-  if (index === -1) return;
-  list.notes.splice(index, 1);
-  ui.confirmDelete = false;
-  persist();
-  render();
-}
-
-function deleteStep(noteId, stepId) {
-  const note = findNote(noteId);
-  if (!note) return;
-  const index = note.steps.findIndex((step) => step.id === stepId);
-  if (index === -1) return;
-  note.steps.splice(index, 1);
-  const neighbor = note.steps[index] || note.steps[index - 1];
-  ui.focusId = neighbor ? `step-title-${neighbor.id}` : `add-step-${noteId}`;
-  persist();
-  render();
-}
-
-function clearDate(noteId) {
-  const note = findNote(noteId);
-  if (!note) return;
-  note.startDate = null;
-  ui.focusId = `note-date-${noteId}`;
-  persist();
-  render();
-}
-
-function setDate(noteId, value) {
-  const note = findNote(noteId);
-  if (!note) return;
-  note.startDate = validDate(value);
-  persist();
-  render();
-}
-
-function toggleStep(noteId, stepId, done) {
-  const step = findStep(noteId, stepId);
-  if (!step) return;
-  step.done = done;
-  persist();
-  render();
-}
-
-function deleteActiveList() {
-  const current = state.activeListId;
-  state.lists = state.lists.filter((list) => list.id !== current);
-  state.activeListId = state.lists[0] ? state.lists[0].id : null;
-  ui.confirmDelete = false;
-  ui.scrollToTop = true;
-  persist();
-  render();
-}
-
-function rememberText(element) {
-  const field = element.dataset.field;
-  if (field === "list-name") {
-    const list = state.lists.find((item) => item.id === element.dataset.listId);
-    if (!list || list.name === element.value) return;
-    list.name = element.value;
-    const option = [...document.querySelectorAll("#open-list option")].find((item) => item.value === list.id);
-    if (option) option.textContent = listLabel(list);
-    persist();
-    return;
-  }
-  if (field === "note-title") {
-    const note = findNote(element.dataset.noteId);
-    if (!note || note.title === element.value) return;
-    note.title = element.value;
-    persist();
-    return;
-  }
-  if (field === "step-title") {
-    const step = findStep(element.dataset.noteId, element.dataset.stepId);
-    if (!step || step.title === element.value) return;
-    step.title = element.value;
-    persist();
-  }
-}
-
-function onClick(event) {
-  if (event.target.classList.contains("backdrop")) {
-    closeDialog();
-    return;
-  }
-  const el = event.target.closest("[data-action]");
-  if (!el || !app.contains(el)) return;
-  const { action, noteId, stepId } = el.dataset;
-  switch (action) {
-    case "open-dialog":
-      openDialog(el.dataset.focusId);
-      break;
-    case "close-dialog":
-      closeDialog();
-      break;
-    case "add-note":
-      addNote();
-      break;
-    case "add-step":
-      addStep(noteId);
-      break;
-    case "delete-note":
-      deleteNote(noteId);
-      break;
-    case "delete-step":
-      deleteStep(noteId, stepId);
-      break;
-    case "clear-date":
-      clearDate(noteId);
-      break;
-    case "ask-delete-list":
-      ui.confirmDelete = true;
-      ui.focusId = "confirm-delete-list";
-      render();
-      break;
-    case "cancel-delete-list":
-      ui.confirmDelete = false;
-      ui.focusId = "ask-delete-list";
-      render();
-      break;
-    case "confirm-delete-list":
-      deleteActiveList();
-      break;
-    default:
-      break;
-  }
 }
 
 function onInput(event) {
-  rememberText(event.target);
+  const el = event.target;
+  const field = el.dataset.field;
+  if (!field || field.endsWith("-date")) return;
+  const project = findProject(el.dataset.projectId);
+  if (!project) return;
+  if (field === "project-name") project.name = el.value;
+  if (field === "stage-name") {
+    const stage = findStage(project, el.dataset.stageId);
+    if (stage) stage.name = el.value;
+  }
+  if (field === "stage-description") {
+    const stage = findStage(project, el.dataset.stageId);
+    if (stage) stage.description = el.value;
+  }
+  if (field === "milestone-name") {
+    const milestone = findMilestone(project, el.dataset.milestoneId);
+    if (milestone) milestone.name = el.value;
+  }
+  persistNow();
+  patchProject(project);
 }
 
 function onChange(event) {
   const el = event.target;
-  if (el.dataset.field === "step-done") {
-    toggleStep(el.dataset.noteId, el.dataset.stepId, el.checked);
+  const project = findProject(el.dataset.projectId);
+  if (!project) return;
+  if (el.dataset.field === "stage-date") {
+    setStageDate(project, el.dataset.stageId, el.value);
+    const clear = el.closest(".date-line") && el.closest(".date-line").querySelector("[data-action='clear-stage-date']");
+    if (clear) clear.hidden = !validDate(el.value);
+  }
+  if (el.dataset.field === "milestone-date") {
+    setMilestoneDate(project, el.dataset.milestoneId, el.value);
+    const clear = el.closest(".date-line") && el.closest(".date-line").querySelector("[data-action='clear-milestone-date']");
+    if (clear) clear.hidden = !validDate(el.value);
+  }
+}
+
+function onClick(event) {
+  const card = event.target.closest(".card");
+  if (card) {
+    if (blockClick) {
+      blockClick = false;
+      return;
+    }
+    openProject(card.dataset.projectId);
     return;
   }
-  if (el.dataset.field === "start-date") {
-    setDate(el.dataset.noteId, el.value);
-    return;
-  }
-  if (el.dataset.field === "open-list") {
-    const nextId = el.value;
-    if (!state.lists.some((list) => list.id === nextId)) return;
-    state.activeListId = nextId;
-    ui.confirmDelete = false;
-    ui.scrollToTop = true;
-    persist();
+  blockClick = false;
+  const el = event.target.closest("[data-action]");
+  if (!el || !app.contains(el)) return;
+  const projectId = el.dataset.projectId || state.openId;
+  const action = el.dataset.action;
+  if (action === "add-project") addProject();
+  else if (action === "collapse") collapse();
+  else if (action === "add-stage") addStage(projectId);
+  else if (action === "add-milestone") addMilestone(projectId, el.dataset.stageId);
+  else if (action === "delete-stage") deleteStage(projectId, el.dataset.stageId);
+  else if (action === "delete-milestone") deleteMilestone(projectId, el.dataset.milestoneId);
+  else if (action === "current-stage") setCurrent(projectId, "stage", el.dataset.stageId);
+  else if (action === "current-milestone") setCurrent(projectId, "milestone", el.dataset.milestoneId);
+  else if (action === "clear-stage-date") {
+    const project = findProject(projectId);
+    if (project) {
+      setStageDate(project, el.dataset.stageId, "");
+      const input = panel.querySelector(`[data-focus-id="stage-date-${el.dataset.stageId}"]`);
+      if (input) input.value = "";
+      el.hidden = true;
+    }
+  } else if (action === "clear-milestone-date") {
+    const project = findProject(projectId);
+    if (project) {
+      setMilestoneDate(project, el.dataset.milestoneId, "");
+      const input = panel.querySelector(`[data-focus-id="milestone-date-${el.dataset.milestoneId}"]`);
+      if (input) input.value = "";
+      el.hidden = true;
+    }
+  } else if (action === "ask-delete-project") {
+    ui.confirmDelete = true;
+    pendingFocus = "confirm-delete-project";
     render();
-    return;
-  }
-  rememberText(el);
+  } else if (action === "cancel-delete-project") {
+    ui.confirmDelete = false;
+    pendingFocus = "ask-delete-project";
+    render();
+  } else if (action === "confirm-delete-project") deleteProject();
+  else if (action === "zoom-in") zoomAroundCenter(1.12);
+  else if (action === "zoom-out") zoomAroundCenter(1 / 1.12);
+  else if (action === "zoom-reset") resetZoom();
 }
 
-function onKeydown(event) {
-  if (event.isComposing) return;
-  if (event.key === "Escape" && ui.dialogOpen) {
-    event.preventDefault();
-    closeDialog();
+function onKeyDown(event) {
+  if (event.key === "Escape") {
+    if (ui.confirmDelete) {
+      ui.confirmDelete = false;
+      pendingFocus = "ask-delete-project";
+      render();
+      return;
+    }
+    if (state.openId) collapse();
     return;
   }
-  if (event.key === "Enter" && event.target.dataset.field === "step-title") {
+  const card = event.target.closest && event.target.closest(".card");
+  if (card && (event.key === "Enter" || event.key === " ")) {
     event.preventDefault();
-    addStep(event.target.dataset.noteId, event.target.dataset.stepId);
+    openProject(card.dataset.projectId);
     return;
   }
-  if (!ui.dialogOpen || event.key !== "Tab") return;
-  const dialog = app.querySelector("[role=dialog]");
-  if (!dialog) return;
-  const focusable = [...dialog.querySelectorAll("button, input, select, textarea")].filter((el) => !el.disabled);
-  if (focusable.length === 0) return;
-  const first = focusable[0];
-  const last = focusable[focusable.length - 1];
-  if (event.shiftKey && document.activeElement === first) {
+  const inControl = typingTarget(event.target) || (event.target.closest && event.target.closest("button, .card"));
+  if (inControl && event.code === "Space") return;
+  if (event.code === "Space") {
     event.preventDefault();
-    last.focus();
-  } else if (!event.shiftKey && document.activeElement === last) {
-    event.preventDefault();
-    first.focus();
+    spaceDown = true;
+    document.body.classList.add("is-space");
+    return;
   }
+  if (typingTarget(event.target)) return;
+  if (event.key === "+" || event.key === "=") zoomAroundCenter(1.12);
+  if (event.key === "-" || event.key === "_") zoomAroundCenter(1 / 1.12);
+  if (event.key === "0") resetZoom();
 }
 
-function onSubmit(event) {
-  if (event.target.id !== "new-list-form") return;
+function typingTarget(element) {
+  return Boolean(element && element.closest && element.closest("input, textarea, select"));
+}
+
+function onPointerDown(event) {
+  if (!canvas.contains(event.target)) return;
+  if (event.button !== 0 && event.button !== 1) return;
+  blockClick = false;
+  pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+  if (pointers.size >= 2) {
+    gesture = makePinch();
+    canvas.classList.add("is-panning");
+    return;
+  }
+  const card = event.button === 0 && !spaceDown ? event.target.closest(".card") : null;
+  if (card) {
+    const project = findProject(card.dataset.projectId);
+    if (!project) return;
+    gesture = {
+      type: "card",
+      pointerId: event.pointerId,
+      projectId: project.id,
+      startX: event.clientX,
+      startY: event.clientY,
+      origX: project.x,
+      origY: project.y,
+      moved: false,
+    };
+    return;
+  }
+  gesture = {
+    type: "pan",
+    pointerId: event.pointerId,
+    startX: event.clientX,
+    startY: event.clientY,
+    origX: state.camera.x,
+    origY: state.camera.y,
+  };
+  canvas.classList.add("is-panning");
+  if (event.button === 1) event.preventDefault();
+}
+
+const pointers = new Map();
+
+function onPointerMove(event) {
+  if (!pointers.has(event.pointerId)) return;
+  pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+  if (!gesture) return;
+  if (gesture.type === "pinch") {
+    applyPinch();
+    return;
+  }
+  if (gesture.pointerId !== event.pointerId) return;
+  const dx = event.clientX - gesture.startX;
+  const dy = event.clientY - gesture.startY;
+  if (gesture.type === "pan") {
+    state.camera.x = gesture.origX + dx;
+    state.camera.y = gesture.origY + dy;
+    applyCamera();
+    return;
+  }
+  if (!gesture.moved && Math.hypot(dx, dy) < 6) return;
+  gesture.moved = true;
+  const project = findProject(gesture.projectId);
+  if (!project) return;
+  project.x = gesture.origX + dx / state.camera.zoom;
+  project.y = gesture.origY + dy / state.camera.zoom;
+  const el = cardEl(project.id);
+  if (!el) return;
+  el.classList.add("is-dragging");
+  el.style.transform = `translate(${project.x}px, ${project.y}px)`;
+}
+
+function onPointerUp(event) {
+  pointers.delete(event.pointerId);
+  if (!gesture) return;
+  if (gesture.type === "pinch") {
+    if (pointers.size >= 2) {
+      gesture = makePinch();
+      return;
+    }
+    blockClick = true;
+    endGesture(true);
+    return;
+  }
+  if (gesture.pointerId !== event.pointerId) return;
+  const moved = gesture.type === "pan" || gesture.moved;
+  if (moved) blockClick = true;
+  endGesture(moved);
+}
+
+function endGesture(save) {
+  gesture = null;
+  canvas.classList.remove("is-panning");
+  world.querySelectorAll(".is-dragging").forEach((el) => el.classList.remove("is-dragging"));
+  if (save) persistNow();
+}
+
+function makePinch() {
+  const points = [...pointers.values()];
+  const first = points[0];
+  const second = points[1];
+  const mid = screenPoint((first.x + second.x) / 2, (first.y + second.y) / 2);
+  return {
+    type: "pinch",
+    startDist: Math.max(24, Math.hypot(second.x - first.x, second.y - first.y)),
+    startZoom: state.camera.zoom,
+    startCamX: state.camera.x,
+    startCamY: state.camera.y,
+    startMidX: mid.x,
+    startMidY: mid.y,
+  };
+}
+
+function applyPinch() {
+  const points = [...pointers.values()];
+  if (points.length < 2 || !gesture || gesture.type !== "pinch") return;
+  const first = points[0];
+  const second = points[1];
+  const mid = screenPoint((first.x + second.x) / 2, (first.y + second.y) / 2);
+  const dist = Math.max(24, Math.hypot(second.x - first.x, second.y - first.y));
+  const next = clamp(gesture.startZoom * (dist / gesture.startDist), MIN_ZOOM, MAX_ZOOM);
+  const worldX = (gesture.startMidX - gesture.startCamX) / gesture.startZoom;
+  const worldY = (gesture.startMidY - gesture.startCamY) / gesture.startZoom;
+  state.camera.zoom = next;
+  state.camera.x = mid.x - worldX * next;
+  state.camera.y = mid.y - worldY * next;
+  applyCamera();
+}
+
+function wheelDelta(event, value) {
+  if (event.deltaMode === 1) return value * 16;
+  if (event.deltaMode === 2) return value * 240;
+  return value;
+}
+
+function isZoomWheel(event) {
+  if (event.ctrlKey || event.metaKey) return true;
+  if (event.deltaMode !== 0) return true;
+  return Math.abs(event.deltaX) < 1 && Math.abs(event.deltaY) >= 50;
+}
+
+function onWheel(event) {
   event.preventDefault();
-  const data = new FormData(event.target);
-  const name = String(data.get("name") || "").trim();
-  const input = event.target.querySelector("input[name=name]");
-  if (!name) {
-    if (input) input.focus();
+  const point = screenPoint(event.clientX, event.clientY);
+  if (event.shiftKey && !event.ctrlKey && !event.metaKey) {
+    state.camera.x -= wheelDelta(event, event.deltaY);
+    state.camera.y -= wheelDelta(event, event.deltaX);
+    applyCamera();
+    persistSoon();
     return;
   }
-  const kind = data.get("kind") === "starter" ? "starter" : "blank";
-  createList(name, kind);
-}
-
-function refreshFromStorage() {
-  const raw = readStorage();
-  const current = JSON.stringify(state);
-  if (raw === current) return;
-  if (raw === null && state.lists.length === 0 && state.activeListId === null) return;
-  try {
-    const next = normalize(raw ? JSON.parse(raw) : null);
-    state = next;
-    ui.dialogOpen = false;
-    ui.confirmDelete = false;
-    render();
-  } catch (err) {
-    // Keep the current screen if storage cannot be read.
+  if (isZoomWheel(event)) {
+    const pixels = wheelDelta(event, event.deltaY);
+    // Pinch events are small. A mouse notch is a large delta and needs a gentler step.
+    const pinch = (event.ctrlKey || event.metaKey) && Math.abs(pixels) < 50;
+    const speed = pinch ? 0.012 : 0.0018;
+    zoomAt(point.x, point.y, Math.exp(-pixels * speed));
+    persistSoon();
+    return;
   }
+  state.camera.x -= wheelDelta(event, event.deltaX);
+  state.camera.y -= wheelDelta(event, event.deltaY);
+  applyCamera();
+  persistSoon();
 }
 
-app.addEventListener("click", onClick);
-app.addEventListener("input", onInput);
-app.addEventListener("change", onChange);
-app.addEventListener("keydown", onKeydown);
-app.addEventListener("submit", onSubmit);
-window.addEventListener("storage", (event) => {
-  if (event.key !== STORAGE_KEY) return;
-  refreshFromStorage();
-});
-document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "visible") refreshFromStorage();
-});
-window.addEventListener("focus", refreshFromStorage);
-render();
+function mount() {
+  app.innerHTML = `
+    <div id="canvas" class="canvas" aria-label="Project canvas">
+      <div id="world" class="world"></div>
+    </div>
+    <header class="bar">
+      <h1 class="wordmark">Glance</h1>
+      <button type="button" class="button" data-action="add-project">New project</button>
+    </header>
+    <div class="zoom" aria-label="Zoom">
+      <button type="button" data-action="zoom-out" aria-label="Zoom out">−</button>
+      <button type="button" class="zoom-label" data-action="zoom-reset" aria-label="Reset zoom">100%</button>
+      <button type="button" data-action="zoom-in" aria-label="Zoom in">+</button>
+    </div>
+    <div id="empty" class="empty">
+      <div class="empty-card">
+        <h2>No projects yet</h2>
+        <p>Add a project to put it on the canvas. Click a project to open it, and drag it to move it.</p>
+        <button type="button" class="button" data-action="add-project">Add a project</button>
+      </div>
+    </div>
+    <aside id="panel" class="panel" hidden aria-label="Project"></aside>
+    <p class="warning" role="alert"${persistOk ? " hidden" : ""}>This browser blocked saving. Your changes will disappear on reload.</p>
+  `;
+  canvas = document.querySelector("#canvas");
+  world = document.querySelector("#world");
+  panel = document.querySelector("#panel");
+  empty = document.querySelector("#empty");
+  zoomLabel = document.querySelector(".zoom-label");
+
+  app.addEventListener("click", onClick);
+  app.addEventListener("input", onInput);
+  app.addEventListener("change", onChange);
+  window.addEventListener("keydown", onKeyDown);
+  window.addEventListener("keyup", (event) => {
+    if (event.code !== "Space") return;
+    spaceDown = false;
+    document.body.classList.remove("is-space");
+  });
+  canvas.addEventListener("pointerdown", onPointerDown);
+  window.addEventListener("pointermove", onPointerMove);
+  window.addEventListener("pointerup", onPointerUp);
+  window.addEventListener("pointercancel", onPointerUp);
+  canvas.addEventListener("wheel", onWheel, { passive: false });
+  canvas.addEventListener("contextmenu", (event) => event.preventDefault());
+  window.addEventListener("storage", (event) => {
+    if (event.key === STORAGE_KEY) refreshFromStorage();
+  });
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") persistNow();
+    else refreshFromStorage();
+  });
+  window.addEventListener("pagehide", persistNow);
+  window.addEventListener("resize", applyCamera);
+  render();
+}
+
+mount();
