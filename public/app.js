@@ -4,7 +4,7 @@
 //   camera: { x, y, zoom },
 //   openId,
 //   projects: [{
-//     id, name, x, y,
+//     id, name, x, y, startDate,
 //     current: null | { kind: "stage" | "milestone", id },
 //     stages: [{ id, name, description, date, milestones: [{ id, name, date, done }] }]
 //   }]
@@ -14,7 +14,7 @@ const STORAGE_KEY = "glance.v2";
 const MIN_ZOOM = 0.35;
 const MAX_ZOOM = 2.25;
 const GRID = 24;
-const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const CALENDAR_ICON = `<svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true"><rect x="2" y="3" width="12" height="11" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M2 7h12M5.5 1.8v2.4M10.5 1.8v2.4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>`;
 
 const app = document.querySelector("#app");
 
@@ -84,7 +84,19 @@ function finite(value, fallback) {
 }
 
 function validDate(value) {
-  return typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : null;
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+  const [year, month, day] = value.split("-").map(Number);
+  const date = new Date(year, month - 1, day);
+  if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day) return null;
+  return value;
+}
+
+function earliestProjectDate(stages) {
+  let earliest = null;
+  for (const stage of stages) {
+    if (stage.date && (!earliest || stage.date < earliest)) earliest = stage.date;
+  }
+  return earliest;
 }
 
 function clamp(number, min, max) {
@@ -129,6 +141,7 @@ function normalize(raw) {
       name: typeof project.name === "string" ? project.name : "",
       x: finite(project.x, 0),
       y: finite(project.y, 0),
+      startDate: validDate(project.startDate) || earliestProjectDate(stages) || todayISO(),
       current,
       stages,
     });
@@ -242,8 +255,28 @@ function addDays(iso, days) {
 }
 
 function formatDate(iso) {
-  const [year, month, day] = iso.split("-").map(Number);
-  return `${MONTHS[month - 1]} ${day}, ${year}`;
+  return validDate(iso) || iso;
+}
+
+function isoDateHtml(options) {
+  const value = validDate(options.value) ? options.value : "";
+  const textClass = options.textClass ? ` ${options.textClass}` : "";
+  const wrapClass = options.wrapClass ? ` ${options.wrapClass}` : "";
+  return `
+    <span class="iso-date${wrapClass}">
+      <input class="iso-date-text${textClass}" type="text" inputmode="numeric" maxlength="10" placeholder="YYYY-MM-DD" spellcheck="false" autocomplete="off" aria-label="${esc(options.label)}" value="${esc(value)}" ${options.attrs || ""}>
+      <button type="button" class="iso-date-cal" data-action="open-calendar" aria-label="${esc(options.calLabel || `Choose ${options.label}`)}">${CALENDAR_ICON}</button>
+      <input class="iso-date-picker" type="date" tabindex="-1" aria-hidden="true" value="${esc(value)}">
+    </span>
+  `;
+}
+
+function syncIsoPicker(text) {
+  if (!text || !text.parentElement) return;
+  const picker = text.parentElement.querySelector(".iso-date-picker");
+  if (!picker) return;
+  const iso = validDate(text.value.trim());
+  picker.value = iso || "";
 }
 
 function currentInfo(project) {
@@ -345,7 +378,12 @@ function milestoneHtml(project, milestone) {
         <button type="button" class="mark${milestone.done ? " is-filled" : ""}" data-action="toggle-done" data-project-id="${pid}" data-milestone-id="${mid}" data-focus-id="done-${mid}" aria-pressed="${milestone.done ? "true" : "false"}" aria-label="${milestone.done ? "Done" : "Not done"}"></button>
         <input class="milestone-name" type="text" data-field="milestone-name" data-project-id="${pid}" data-milestone-id="${mid}" data-focus-id="milestone-name-${mid}" value="${esc(milestone.name)}" placeholder="Milestone" aria-label="Milestone name" maxlength="160" autocomplete="off">
       </div>
-      <input class="milestone-date" type="date" data-field="milestone-date" data-project-id="${pid}" data-milestone-id="${mid}" data-focus-id="milestone-date-${mid}" value="${milestone.date ? esc(milestone.date) : ""}" aria-label="Milestone date">
+      ${isoDateHtml({
+        value: milestone.date,
+        label: "Milestone date",
+        textClass: "milestone-date",
+        attrs: `data-field="milestone-date" data-project-id="${pid}" data-milestone-id="${mid}" data-focus-id="milestone-date-${mid}"`,
+      })}
       <button type="button" class="node-remove" data-action="delete-milestone" data-project-id="${pid}" data-milestone-id="${mid}" aria-label="Delete milestone"><span aria-hidden="true">×</span></button>
     </div>
   `;
@@ -365,7 +403,13 @@ function stageHtml(project, stage) {
           <button type="button" class="node-remove" data-action="delete-stage" data-project-id="${pid}" data-stage-id="${sid}" aria-label="Delete stage"><span aria-hidden="true">×</span></button>
         </div>
         <textarea class="stage-description" data-field="stage-description" data-project-id="${pid}" data-stage-id="${sid}" data-focus-id="stage-desc-${sid}" placeholder="Description" aria-label="Stage description" maxlength="4000" rows="1">${esc(stage.description)}</textarea>
-        <input class="stage-date${stage.date ? " has-date" : ""}" type="date" data-field="stage-date" data-project-id="${pid}" data-stage-id="${sid}" data-focus-id="stage-date-${sid}" value="${stage.date ? esc(stage.date) : ""}" aria-label="Stage date">
+        ${isoDateHtml({
+          value: stage.date,
+          label: "Stage date",
+          textClass: "stage-date",
+          wrapClass: `stage-date-control${stage.date ? " has-date" : ""}`,
+          attrs: `data-field="stage-date" data-project-id="${pid}" data-stage-id="${sid}" data-focus-id="stage-date-${sid}"`,
+        })}
       </div>
       <div class="timeline">
         ${nodes}
@@ -386,7 +430,17 @@ function panelHtml(project) {
     : `<button type="button" class="text-button danger" data-action="ask-delete-project" data-focus-id="ask-delete-project">Delete project</button>`;
   return `
     <div class="board-top">
-      <input class="project-name" type="text" data-field="project-name" data-project-id="${esc(project.id)}" data-focus-id="project-name" value="${esc(project.name)}" placeholder="Project name" aria-label="Project name" maxlength="120" autocomplete="off">
+      <div class="board-title">
+        <input class="project-name" type="text" data-field="project-name" data-project-id="${esc(project.id)}" data-focus-id="project-name" value="${esc(project.name)}" placeholder="Project name" aria-label="Project name" maxlength="120" autocomplete="off">
+        <div class="project-start">
+          <span>Project start</span>
+          ${isoDateHtml({
+            value: project.startDate,
+            label: "Project start",
+            attrs: `data-field="project-start" data-project-id="${esc(project.id)}" data-focus-id="project-start"`,
+          })}
+        </div>
+      </div>
       <button type="button" class="button button-quiet" data-action="collapse">Collapse</button>
     </div>
     <div class="panel-body">
@@ -627,16 +681,29 @@ function wizardCount(value) {
   return count;
 }
 
+function wizardStartDate() {
+  return (ui.wizard && validDate(ui.wizard.startDate)) || todayISO();
+}
+
+function stageChainDate(previousStage) {
+  if (!previousStage) return wizardStartDate();
+  const milestones = previousStage.milestones || [];
+  for (let i = milestones.length - 1; i >= 0; i -= 1) {
+    const date = validDate(milestones[i].date);
+    if (date) return date;
+  }
+  return validDate(previousStage.date) || wizardStartDate();
+}
+
 function blankWizardMilestone(index, anchor) {
-  const base = validDate(anchor) || todayISO();
   return {
     name: `Milestone ${index + 1}`,
-    date: index === 0 ? base : addDays(base, 30),
+    date: validDate(anchor) || wizardStartDate(),
   };
 }
 
-function blankWizardStage(index, previousDate) {
-  const date = index === 0 ? todayISO() : addDays(previousDate || todayISO(), 30);
+function blankWizardStage(index, previousStage) {
+  const date = index === 0 ? wizardStartDate() : stageChainDate(previousStage);
   return {
     name: `Stage ${index + 1}`,
     description: "",
@@ -647,9 +714,14 @@ function blankWizardStage(index, previousDate) {
 
 function wizardDurationHtml(action, index) {
   const indexAttr = index == null ? "" : ` data-index="${index}"`;
-  return [30, 90, 180].map((days) => `
-    <button type="button" class="wizard-duration" data-action="${action}" data-days="${days}"${indexAttr} aria-label="${days} days">${days}</button>
+  const day1 = action === "wizard-stage-duration" ? "wizard-stage-day1" : "wizard-milestone-day1";
+  const adds = [30, 90, 180].map((days) => `
+    <button type="button" class="wizard-duration" data-action="${action}" data-days="${days}"${indexAttr} aria-label="Add ${days} days">+${days}</button>
   `).join("");
+  return `
+    <button type="button" class="wizard-duration wizard-day1" data-action="${day1}"${indexAttr} aria-label="Reset to project start">Day 1</button>
+    ${adds}
+  `;
 }
 
 function openWizard() {
@@ -657,6 +729,8 @@ function openWizard() {
     step: 0,
     name: "",
     countText: "",
+    startDate: todayISO(),
+    count: 0,
     stages: [],
     error: "",
     focus: "project-name",
@@ -692,7 +766,7 @@ function presentWizard() {
 
 function wizardHtml() {
   const w = ui.wizard;
-  const total = w.stages.length;
+  const total = w.count || w.stages.length;
   const onStage = w.step > 0;
   const last = onStage && w.step === total;
   const stage = onStage ? w.stages[w.step - 1] : null;
@@ -732,11 +806,19 @@ function wizardHtml() {
 function wizardStartHtml() {
   const w = ui.wizard;
   return `
-    <p class="wizard-lead">Name the project and how many stages. Each stage starts named and dated, so you can click through and only change what you want. Nothing is added until you finish.</p>
+    <p class="wizard-lead">Name the project, set day 1, and choose how many stages. Later dates start where the previous one left off. +30, +90, and +180 add to the date shown. Nothing is added until you finish.</p>
     <label class="wizard-field">
       <span>Project name</span>
       <input class="wizard-name" type="text" data-wizard-field="project-name" data-wizard-focus="project-name" value="${esc(w.name)}" placeholder="Project name" maxlength="120" autocomplete="off">
     </label>
+    <div class="wizard-field">
+      <span>Project start</span>
+      ${isoDateHtml({
+        value: w.startDate,
+        label: "Project start",
+        attrs: `data-wizard-field="project-start"`,
+      })}
+    </div>
     <label class="wizard-field">
       <span>Number of stages</span>
       <input class="wizard-count" type="text" inputmode="numeric" data-wizard-field="stage-count" data-wizard-focus="stage-count" value="${esc(w.countText)}" placeholder="3" maxlength="2" autocomplete="off">
@@ -750,9 +832,13 @@ function wizardStageHtml(stage) {
       <span class="wizard-mark" aria-hidden="true"></span>
       <input class="wizard-milestone-name" type="text" data-wizard-field="milestone-name" data-index="${index}" data-wizard-focus="${index === stage.milestones.length - 1 ? "milestone-new" : ""}" value="${esc(milestone.name)}" placeholder="Milestone" maxlength="160" aria-label="Milestone name" autocomplete="off">
       <div class="wizard-date-row">
-        <input class="wizard-milestone-date" type="date" data-wizard-field="milestone-date" data-index="${index}" value="${milestone.date ? esc(milestone.date) : ""}" aria-label="Milestone date">
-        <div class="wizard-durations" role="group" aria-label="Days after the previous milestone">
-          <span class="wizard-days-label">days</span>
+        ${isoDateHtml({
+          value: milestone.date,
+          label: "Milestone date",
+          textClass: "wizard-milestone-date",
+          attrs: `data-wizard-field="milestone-date" data-index="${index}"`,
+        })}
+        <div class="wizard-durations" role="group" aria-label="Add days or return to day 1">
           ${wizardDurationHtml("wizard-milestone-duration", index)}
         </div>
       </div>
@@ -767,9 +853,13 @@ function wizardStageHtml(stage) {
     <div class="wizard-when">
       <span>Date</span>
       <div class="wizard-date-row">
-        <input class="wizard-stage-date" type="date" data-wizard-field="stage-date" value="${stage.date ? esc(stage.date) : ""}" aria-label="Stage date">
-        <div class="wizard-durations" role="group" aria-label="Days after the previous stage">
-          <span class="wizard-days-label">days</span>
+        ${isoDateHtml({
+          value: stage.date,
+          label: "Stage date",
+          textClass: "wizard-stage-date",
+          attrs: `data-wizard-field="stage-date"`,
+        })}
+        <div class="wizard-durations" role="group" aria-label="Add days or return to day 1">
           ${wizardDurationHtml("wizard-stage-duration")}
         </div>
       </div>
@@ -786,23 +876,33 @@ function wizardStageHtml(stage) {
   `;
 }
 
+function readIsoValue(el, previous) {
+  const raw = el.value.trim();
+  if (validDate(raw)) return raw;
+  if (raw === "") return "";
+  return previous;
+}
+
 function readWizardFields() {
   const w = ui.wizard;
   if (!w || !wizardEl) return;
   wizardEl.querySelectorAll("[data-wizard-field]").forEach((el) => {
     const field = el.dataset.wizardField;
     if (field === "project-name") w.name = el.value;
-    else if (field === "stage-count") w.countText = el.value;
+    else if (field === "project-start") {
+      const next = readIsoValue(el, w.startDate);
+      if (next) w.startDate = next;
+    } else if (field === "stage-count") w.countText = el.value;
     else if (w.step > 0 && w.stages[w.step - 1]) {
       const stage = w.stages[w.step - 1];
       if (field === "stage-name") stage.name = el.value;
-      else if (field === "stage-date") stage.date = el.value;
+      else if (field === "stage-date") stage.date = readIsoValue(el, stage.date);
       else if (field === "stage-description") stage.description = el.value;
       else if (field === "milestone-name" || field === "milestone-date") {
         const index = Number(el.dataset.index);
         if (!stage.milestones[index]) return;
         if (field === "milestone-name") stage.milestones[index].name = el.value;
-        else stage.milestones[index].date = el.value;
+        else stage.milestones[index].date = readIsoValue(el, stage.milestones[index].date);
       }
     }
   });
@@ -818,43 +918,50 @@ function rememberWizardField(el) {
   }
 }
 
-function ensureWizardStages(count) {
-  const prev = ui.wizard.stages;
-  const stages = [];
-  for (let i = 0; i < count; i += 1) {
-    if (prev[i]) stages.push(prev[i]);
-    else stages.push(blankWizardStage(i, i > 0 ? stages[i - 1].date : null));
-  }
-  ui.wizard.stages = stages;
+function ensureStageReady(index) {
+  const stages = ui.wizard.stages;
+  if (stages[index]) return;
+  stages[index] = blankWizardStage(index, index > 0 ? stages[index - 1] : null);
 }
 
-function wizardAnchorDate(kind, index) {
-  const stageIndex = ui.wizard.step - 1;
-  const stage = ui.wizard.stages[stageIndex];
+function ensureWizardStages(count) {
+  ui.wizard.count = count;
+  if (ui.wizard.stages.length > count) ui.wizard.stages.length = count;
+  ensureStageReady(0);
+}
+
+function wizardCurrentDate(kind, index) {
+  const stage = ui.wizard.stages[ui.wizard.step - 1];
+  if (kind === "stage") return validDate(stage.date) || wizardStartDate();
+  const milestone = stage.milestones[index];
+  return (milestone && validDate(milestone.date)) || validDate(stage.date) || wizardStartDate();
+}
+
+function wizardWriteDate(kind, index, iso) {
+  const stage = ui.wizard.stages[ui.wizard.step - 1];
+  let input = null;
   if (kind === "stage") {
-    if (stageIndex <= 0) return todayISO();
-    return validDate(ui.wizard.stages[stageIndex - 1].date) || todayISO();
+    stage.date = iso;
+    input = wizardEl.querySelector("[data-wizard-field='stage-date']");
+  } else if (stage.milestones[index]) {
+    stage.milestones[index].date = iso;
+    input = wizardEl.querySelector(`[data-wizard-field='milestone-date'][data-index='${index}']`);
   }
-  if (index <= 0) return validDate(stage.date) || todayISO();
-  const previous = stage.milestones[index - 1];
-  return (previous && validDate(previous.date)) || validDate(stage.date) || todayISO();
+  if (!input) return;
+  input.value = iso;
+  syncIsoPicker(input);
 }
 
 function wizardApplyDuration(kind, index, days) {
   if (!ui.wizard || ui.wizard.step < 1 || !Number.isFinite(days)) return;
   readWizardFields();
-  const stage = ui.wizard.stages[ui.wizard.step - 1];
-  const next = addDays(wizardAnchorDate(kind, index), days);
-  if (kind === "stage") {
-    stage.date = next;
-    const input = wizardEl.querySelector("[data-wizard-field='stage-date']");
-    if (input) input.value = next;
-    return;
-  }
-  if (!stage.milestones[index]) return;
-  stage.milestones[index].date = next;
-  const input = wizardEl.querySelector(`[data-wizard-field='milestone-date'][data-index='${index}']`);
-  if (input) input.value = next;
+  wizardWriteDate(kind, index, addDays(wizardCurrentDate(kind, index), days));
+}
+
+function wizardDay1(kind, index) {
+  if (!ui.wizard || ui.wizard.step < 1) return;
+  readWizardFields();
+  wizardWriteDate(kind, index, wizardStartDate());
 }
 
 function wizardNext() {
@@ -877,6 +984,7 @@ function wizardNext() {
       presentWizard();
       return;
     }
+    w.startDate = validDate(w.startDate) || todayISO();
     ensureWizardStages(count);
     w.step = 1;
     w.error = "";
@@ -902,10 +1010,11 @@ function wizardNext() {
     return;
   }
   stage.milestones = stage.milestones.filter((milestone) => milestone.name.trim());
-  if (w.step >= w.stages.length) {
+  if (w.step >= w.count) {
     finishWizard();
     return;
   }
+  ensureStageReady(w.step);
   w.step += 1;
   w.error = "";
   w.focus = "stage-name";
@@ -930,8 +1039,8 @@ function wizardAddMilestone() {
   const index = stage.milestones.length;
   const previous = index > 0 ? stage.milestones[index - 1] : null;
   const anchor = previous
-    ? validDate(previous.date) || validDate(stage.date) || todayISO()
-    : validDate(stage.date) || todayISO();
+    ? validDate(previous.date) || validDate(stage.date) || wizardStartDate()
+    : validDate(stage.date) || wizardStartDate();
   stage.milestones.push(blankWizardMilestone(index, anchor));
   ui.wizard.error = "";
   ui.wizard.focus = "milestone-new";
@@ -971,6 +1080,7 @@ function finishWizard() {
     name: w.name.trim(),
     x: point.x,
     y: point.y,
+    startDate: validDate(w.startDate) || todayISO(),
     current: stages.length ? { kind: "stage", id: stages[0].id } : null,
     stages,
   };
@@ -991,6 +1101,7 @@ function addProject() {
     name: "",
     x: point.x,
     y: point.y,
+    startDate: todayISO(),
     current: null,
     stages: [],
   };
@@ -1090,13 +1201,95 @@ function deleteProject() {
   render();
 }
 
+function openIsoCalendar(button) {
+  const wrap = button.closest(".iso-date");
+  if (!wrap) return;
+  const text = wrap.querySelector(".iso-date-text");
+  const picker = wrap.querySelector(".iso-date-picker");
+  if (!text || !picker) return;
+  const iso = validDate(text.value.trim());
+  if (iso) picker.value = iso;
+  try {
+    if (typeof picker.showPicker === "function") picker.showPicker();
+    else picker.focus();
+  } catch (err) {
+    picker.focus();
+  }
+}
+
+function applyProjectDate(el) {
+  const project = findProject(el.dataset.projectId);
+  if (!project) return;
+  const raw = el.value.trim();
+  const iso = validDate(raw);
+  if (!iso && raw !== "") return;
+  const field = el.dataset.field;
+  if (field === "project-start") {
+    if (!iso) return;
+    project.startDate = iso;
+  } else if (field === "stage-date") {
+    setStageDate(project, el.dataset.stageId, raw);
+    const wrap = el.closest(".stage-date-control");
+    if (wrap) wrap.classList.toggle("has-date", Boolean(iso));
+    syncIsoPicker(el);
+    return;
+  } else if (field === "milestone-date") {
+    setMilestoneDate(project, el.dataset.milestoneId, raw);
+    const node = el.closest(".node");
+    if (node) node.classList.toggle("has-date", Boolean(iso));
+    syncIsoPicker(el);
+    return;
+  } else return;
+  syncIsoPicker(el);
+  persistNow();
+  patchProject(project);
+}
+
+function restoreIsoText(el) {
+  if (!el || !el.classList || !el.classList.contains("iso-date-text")) return;
+  const raw = el.value.trim();
+  if (validDate(raw)) {
+    syncIsoPicker(el);
+    return;
+  }
+  if (raw === "") return;
+  let stored = "";
+  if (el.dataset.wizardField && ui.wizard) {
+    readWizardFields();
+    if (el.dataset.wizardField === "project-start") stored = ui.wizard.startDate || "";
+    else if (el.dataset.wizardField === "stage-date" && ui.wizard.stages[ui.wizard.step - 1]) stored = ui.wizard.stages[ui.wizard.step - 1].date || "";
+    else if (el.dataset.wizardField === "milestone-date" && ui.wizard.stages[ui.wizard.step - 1]) {
+      const milestone = ui.wizard.stages[ui.wizard.step - 1].milestones[Number(el.dataset.index)];
+      stored = milestone ? milestone.date || "" : "";
+    }
+  } else if (el.dataset.field) {
+    const project = findProject(el.dataset.projectId);
+    if (project && el.dataset.field === "project-start") stored = project.startDate || "";
+    else if (project && el.dataset.field === "stage-date") {
+      const stage = findStage(project, el.dataset.stageId);
+      stored = stage ? stage.date || "" : "";
+    } else if (project && el.dataset.field === "milestone-date") {
+      const milestone = findMilestone(project, el.dataset.milestoneId);
+      stored = milestone ? milestone.date || "" : "";
+    }
+  }
+  el.value = stored;
+  syncIsoPicker(el);
+}
+
 function onInput(event) {
   const el = event.target;
+  if (el.classList && el.classList.contains("iso-date-picker")) return;
   if (el.dataset.wizardField) {
     rememberWizardField(el);
+    if (el.classList.contains("iso-date-text")) syncIsoPicker(el);
     return;
   }
   const field = el.dataset.field;
+  if (field === "project-start" || field === "stage-date" || field === "milestone-date") {
+    applyProjectDate(el);
+    return;
+  }
   if (!field || field.endsWith("-date")) return;
   const project = findProject(el.dataset.projectId);
   if (!project) return;
@@ -1119,20 +1312,20 @@ function onInput(event) {
 
 function onChange(event) {
   const el = event.target;
+  if (el.classList && el.classList.contains("iso-date-picker")) {
+    const text = el.parentElement && el.parentElement.querySelector(".iso-date-text");
+    if (!text) return;
+    text.value = el.value;
+    text.dispatchEvent(new Event("input", { bubbles: true }));
+    text.dispatchEvent(new Event("change", { bubbles: true }));
+    return;
+  }
   if (el.dataset.wizardField) {
     rememberWizardField(el);
     return;
   }
-  const project = findProject(el.dataset.projectId);
-  if (!project) return;
-  if (el.dataset.field === "stage-date") {
-    setStageDate(project, el.dataset.stageId, el.value);
-    el.classList.toggle("has-date", Boolean(validDate(el.value)));
-  }
-  if (el.dataset.field === "milestone-date") {
-    setMilestoneDate(project, el.dataset.milestoneId, el.value);
-    const node = el.closest(".node");
-    if (node) node.classList.toggle("has-date", Boolean(validDate(el.value)));
+  if (el.dataset.field === "project-start" || el.dataset.field === "stage-date" || el.dataset.field === "milestone-date") {
+    applyProjectDate(el);
   }
 }
 
@@ -1159,6 +1352,9 @@ function onClick(event) {
   else if (action === "wizard-add-milestone") wizardAddMilestone();
   else if (action === "wizard-stage-duration") wizardApplyDuration("stage", 0, Number(el.dataset.days));
   else if (action === "wizard-milestone-duration") wizardApplyDuration("milestone", Number(el.dataset.index), Number(el.dataset.days));
+  else if (action === "wizard-stage-day1") wizardDay1("stage", 0);
+  else if (action === "wizard-milestone-day1") wizardDay1("milestone", Number(el.dataset.index));
+  else if (action === "open-calendar") openIsoCalendar(el);
   else if (action === "wizard-remove-milestone") wizardRemoveMilestone(Number(el.dataset.index));
   else if (action === "collapse") collapse();
   else if (action === "add-stage") addStage(projectId);
@@ -1439,6 +1635,7 @@ function mount() {
   app.addEventListener("click", onClick);
   app.addEventListener("input", onInput);
   app.addEventListener("change", onChange);
+  app.addEventListener("focusout", (event) => restoreIsoText(event.target));
   window.addEventListener("keydown", onKeyDown);
   window.addEventListener("keyup", (event) => {
     if (event.code !== "Space") return;

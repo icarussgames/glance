@@ -421,40 +421,41 @@ body.panel-open .zoom {
   color: #5e584e;
 }
 
-.stage-date {
-  display: block;
-  width: 9.25rem;
-  max-width: 100%;
+.stage-date-control {
+  display: inline-flex;
   margin: 4px 0 0 24px;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--ink);
-  font-size: 0.8125rem;
-  font-variant-numeric: tabular-nums;
+  max-width: 100%;
 }
 
-.stage-date:not(.has-date) {
+.stage-date-control:not(.has-date) {
   position: absolute;
   width: 1px;
   height: 1px;
   margin: -1px;
-  padding: 0;
   overflow: hidden;
   clip: rect(0, 0, 0, 0);
   white-space: nowrap;
-  border: 0;
 }
 
-.stage-label:hover .stage-date,
-.stage-label:focus-within .stage-date {
+.stage-label:hover .stage-date-control,
+.stage-label:focus-within .stage-date-control {
   position: static;
-  width: 9.25rem;
+  width: auto;
   height: auto;
   margin: 4px 0 0 24px;
   overflow: visible;
   clip: auto;
   white-space: normal;
+}
+
+.stage-date {
+  width: 7.6rem;
+  border: 0;
+  background: transparent;
+  padding: 2px 0;
+  color: var(--ink);
+  font-size: 0.8125rem;
+  font-variant-numeric: tabular-nums;
 }
 
 .timeline {
@@ -552,10 +553,10 @@ body.panel-open .zoom {
 .milestone-date {
   position: relative;
   z-index: 1;
-  width: 8.25rem;
+  width: 7.6rem;
   min-width: 0;
   margin: 0;
-  padding: 0;
+  padding: 2px 0;
   border: 0;
   background: var(--surface);
   color: var(--muted);
@@ -568,15 +569,73 @@ body.panel-open .zoom {
   color: var(--ink);
 }
 
-.milestone-date::-webkit-calendar-picker-indicator {
-  margin: 0;
-  opacity: 0;
-  cursor: pointer;
+.iso-date {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  max-width: 100%;
 }
 
-.milestone-date:hover::-webkit-calendar-picker-indicator,
-.milestone-date:focus::-webkit-calendar-picker-indicator {
-  opacity: 0.55;
+.iso-date-text {
+  min-width: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.iso-date-cal {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  flex: none;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--stage);
+  color: var(--ink);
+}
+
+.iso-date-cal:hover,
+.iso-date-cal:focus-visible {
+  border-color: var(--ink);
+}
+
+.iso-date-picker {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.board-title {
+  flex: 1;
+  min-width: 0;
+}
+
+.project-start {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 0.8125rem;
+}
+
+.project-start .iso-date-text {
+  width: 7.6rem;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  background: transparent;
+  padding: 2px 0;
+  color: var(--ink);
+  font-size: 0.9375rem;
 }
 
 .node-remove {
@@ -1068,12 +1127,12 @@ body.panel-open .zoom {
     font-size: 1.05rem;
   }
 
-  .stage-description,
-  .stage-date,
-  .stage-label:hover .stage-date,
-  .stage-label:focus-within .stage-date {
-    margin-left: 0;
-  }
+.stage-description,
+.stage-date-control,
+.stage-label:hover .stage-date-control,
+.stage-label:focus-within .stage-date-control {
+  margin-left: 0;
+}
 
   .timeline {
     min-height: 64px;
