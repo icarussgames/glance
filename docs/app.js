@@ -6,7 +6,7 @@
 //   projects: [{
 //     id, name, x, y,
 //     current: null | { kind: "stage" | "milestone", id },
-//     stages: [{ id, name, description, date, milestones: [{ id, name, date }] }]
+//     stages: [{ id, name, description, date, milestones: [{ id, name, date, done }] }]
 //   }]
 // }
 
@@ -106,6 +106,7 @@ function normalize(raw) {
               id: milestone.id,
               name: typeof milestone.name === "string" ? milestone.name : "",
               date: validDate(milestone.date),
+              done: milestone.done === true,
             });
           }
         }
@@ -320,68 +321,49 @@ function cardHtml(project) {
   `;
 }
 
-function chip(kind, projectId, id, on) {
-  const action = kind === "stage" ? "current-stage" : "current-milestone";
-  const idAttr = kind === "stage" ? `data-stage-id="${esc(id)}"` : `data-milestone-id="${esc(id)}"`;
-  return `<button type="button" class="chip${on ? " is-on" : ""}" data-action="${action}" data-project-id="${esc(projectId)}" ${idAttr} data-focus-id="current-${kind}-${esc(id)}" aria-pressed="${on ? "true" : "false"}">${on ? "Current" : "Set current"}</button>`;
-}
-
 function milestoneHtml(project, milestone) {
   const on = project.current && project.current.kind === "milestone" && project.current.id === milestone.id;
   const pid = esc(project.id);
   const mid = esc(milestone.id);
   return `
-    <div class="milestone">
-      <div class="milestone-top">
-        ${chip("milestone", project.id, milestone.id, on)}
+    <div class="node milestone${on ? " is-current" : ""}${milestone.done ? " is-done" : ""}${milestone.date ? " has-date" : ""}">
+      <div class="node-stretch">
+        <button type="button" class="node-current" data-action="current-milestone" data-project-id="${pid}" data-milestone-id="${mid}" data-focus-id="current-milestone-${mid}" aria-pressed="${on ? "true" : "false"}" aria-label="${on ? "Current milestone" : "Set as current"}"></button>
+        <button type="button" class="mark${milestone.done ? " is-filled" : ""}" data-action="toggle-done" data-project-id="${pid}" data-milestone-id="${mid}" data-focus-id="done-${mid}" aria-pressed="${milestone.done ? "true" : "false"}" aria-label="${milestone.done ? "Done" : "Not done"}"></button>
         <input class="milestone-name" type="text" data-field="milestone-name" data-project-id="${pid}" data-milestone-id="${mid}" data-focus-id="milestone-name-${mid}" value="${esc(milestone.name)}" placeholder="Milestone" aria-label="Milestone name" maxlength="160" autocomplete="off">
-        <button type="button" class="icon-button" data-action="delete-milestone" data-project-id="${pid}" data-milestone-id="${mid}" aria-label="Delete milestone"><span aria-hidden="true">×</span></button>
       </div>
-      <div class="date-line">
-        <label class="date-label">
-          <span>Date</span>
-          <input type="date" data-field="milestone-date" data-project-id="${pid}" data-milestone-id="${mid}" data-focus-id="milestone-date-${mid}" value="${milestone.date ? esc(milestone.date) : ""}">
-        </label>
-        <button type="button" class="text-button" data-action="clear-milestone-date" data-project-id="${pid}" data-milestone-id="${mid}"${milestone.date ? "" : " hidden"}>Clear</button>
-      </div>
+      <input class="milestone-date" type="date" data-field="milestone-date" data-project-id="${pid}" data-milestone-id="${mid}" data-focus-id="milestone-date-${mid}" value="${milestone.date ? esc(milestone.date) : ""}" aria-label="Milestone date">
+      <button type="button" class="node-remove" data-action="delete-milestone" data-project-id="${pid}" data-milestone-id="${mid}" aria-label="Delete milestone"><span aria-hidden="true">×</span></button>
     </div>
   `;
 }
 
 function stageHtml(project, stage) {
   const stageOn = project.current && project.current.kind === "stage" && project.current.id === stage.id;
-  const milestoneOn = project.current && project.current.kind === "milestone" && stage.milestones.some((item) => item.id === project.current.id);
   const pid = esc(project.id);
   const sid = esc(stage.id);
+  const nodes = stage.milestones.map((milestone) => milestoneHtml(project, milestone)).join("");
   return `
-    <article class="stage${stageOn || milestoneOn ? " is-current" : ""}">
-      <div class="stage-head">
-        <input class="stage-name" type="text" data-field="stage-name" data-project-id="${pid}" data-stage-id="${sid}" data-focus-id="stage-name-${sid}" value="${esc(stage.name)}" placeholder="Stage" aria-label="Stage name" maxlength="160" autocomplete="off">
-        ${chip("stage", project.id, stage.id, stageOn)}
+    <article class="stage-row${stageOn ? " is-stage-current" : ""}">
+      <div class="stage-label">
+        <div class="stage-id">
+          <button type="button" class="stage-current${stageOn ? " is-on" : ""}" data-action="current-stage" data-project-id="${pid}" data-stage-id="${sid}" data-focus-id="current-stage-${sid}" aria-pressed="${stageOn ? "true" : "false"}" aria-label="${stageOn ? "Current stage" : "Set stage as current"}"><span class="stage-current-mark" aria-hidden="true"></span></button>
+          <input class="stage-name" type="text" data-field="stage-name" data-project-id="${pid}" data-stage-id="${sid}" data-focus-id="stage-name-${sid}" value="${esc(stage.name)}" placeholder="Stage" aria-label="Stage name" maxlength="160" autocomplete="off">
+          <button type="button" class="node-remove" data-action="delete-stage" data-project-id="${pid}" data-stage-id="${sid}" aria-label="Delete stage"><span aria-hidden="true">×</span></button>
+        </div>
+        <textarea class="stage-description" data-field="stage-description" data-project-id="${pid}" data-stage-id="${sid}" data-focus-id="stage-desc-${sid}" placeholder="Description" aria-label="Stage description" maxlength="4000" rows="1">${esc(stage.description)}</textarea>
+        <input class="stage-date${stage.date ? " has-date" : ""}" type="date" data-field="stage-date" data-project-id="${pid}" data-stage-id="${sid}" data-focus-id="stage-date-${sid}" value="${stage.date ? esc(stage.date) : ""}" aria-label="Stage date">
       </div>
-      <textarea class="stage-description" data-field="stage-description" data-project-id="${pid}" data-stage-id="${sid}" data-focus-id="stage-desc-${sid}" placeholder="Description" aria-label="Stage description" maxlength="4000">${esc(stage.description)}</textarea>
-      <div class="date-line">
-        <label class="date-label">
-          <span>Date</span>
-          <input type="date" data-field="stage-date" data-project-id="${pid}" data-stage-id="${sid}" data-focus-id="stage-date-${sid}" value="${stage.date ? esc(stage.date) : ""}">
-        </label>
-        <button type="button" class="text-button" data-action="clear-stage-date" data-project-id="${pid}" data-stage-id="${sid}"${stage.date ? "" : " hidden"}>Clear</button>
+      <div class="timeline">
+        ${nodes}
+        <button type="button" class="add-node" data-action="add-milestone" data-project-id="${pid}" data-stage-id="${sid}" aria-label="Add milestone"><span aria-hidden="true">+</span></button>
       </div>
-      <div class="milestones">
-        <h3>Milestones</h3>
-        ${stage.milestones.map((milestone) => milestoneHtml(project, milestone)).join("")}
-        <button type="button" class="text-button" data-action="add-milestone" data-project-id="${pid}" data-stage-id="${sid}">Add milestone</button>
-      </div>
-      <button type="button" class="text-button danger" data-action="delete-stage" data-project-id="${pid}" data-stage-id="${sid}">Delete stage</button>
     </article>
   `;
 }
 
 function panelHtml(project) {
-  const info = summary(project);
-  const stages = project.stages.length
-    ? project.stages.map((stage) => stageHtml(project, stage)).join("")
-    : `<p class="quiet">No stages yet.</p>`;
+  const stages = project.stages.map((stage) => stageHtml(project, stage)).join("");
   const foot = ui.confirmDelete
     ? `<div class="confirm">
         <p>Delete this project and everything on it?</p>
@@ -390,15 +372,13 @@ function panelHtml(project) {
       </div>`
     : `<button type="button" class="text-button danger" data-action="ask-delete-project" data-focus-id="ask-delete-project">Delete project</button>`;
   return `
-    <div class="panel-top">
+    <div class="board-top">
       <input class="project-name" type="text" data-field="project-name" data-project-id="${esc(project.id)}" data-focus-id="project-name" value="${esc(project.name)}" placeholder="Project name" aria-label="Project name" maxlength="120" autocomplete="off">
       <button type="button" class="button button-quiet" data-action="collapse">Collapse</button>
     </div>
-    <p class="panel-glance">${esc(`${info.current} · ${info.date}`)}</p>
     <div class="panel-body">
-      <h2>Stages</h2>
-      ${stages}
-      <button type="button" class="button button-quiet add-stage" data-action="add-stage" data-project-id="${esc(project.id)}">Add stage</button>
+      ${stages || `<p class="quiet">No stages yet.</p>`}
+      <button type="button" class="add-stage" data-action="add-stage" data-project-id="${esc(project.id)}">Add stage</button>
     </div>
     <div class="panel-foot">${foot}</div>
   `;
@@ -501,9 +481,17 @@ function zoomAt(sx, sy, factor) {
   applyCamera();
 }
 
+function coveringPanelWidth() {
+  if (!panel || panel.hidden) return 0;
+  const rect = canvas.getBoundingClientRect();
+  const width = panel.getBoundingClientRect().width;
+  if (width > rect.width * 0.75) return 0;
+  return width;
+}
+
 function zoomAroundCenter(factor) {
   const rect = canvas.getBoundingClientRect();
-  const panelWidth = panel.hidden ? 0 : panel.getBoundingClientRect().width;
+  const panelWidth = coveringPanelWidth();
   zoomAt((rect.width - panelWidth) / 2, rect.height / 2, factor);
   persistSoon();
 }
@@ -524,8 +512,7 @@ function resetZoom() {
 
 function visibleRight() {
   const rect = canvas.getBoundingClientRect();
-  const panelWidth = panel.hidden ? 0 : Math.min(panel.getBoundingClientRect().width, rect.width * 0.92);
-  return rect.width - panelWidth - 24;
+  return rect.width - coveringPanelWidth() - 24;
 }
 
 function reveal(project) {
@@ -552,7 +539,7 @@ function reveal(project) {
 
 function placePoint() {
   const rect = canvas.getBoundingClientRect();
-  const panelWidth = panel.hidden ? 0 : panel.getBoundingClientRect().width;
+  const panelWidth = coveringPanelWidth();
   const camera = state.camera;
   let x = ((rect.width - panelWidth) / 2 - camera.x) / camera.zoom - 116;
   let y = (rect.height / 2 - camera.y) / camera.zoom - 48;
@@ -645,7 +632,7 @@ function addMilestone(projectId, stageId) {
   const project = findProject(projectId);
   const stage = project && findStage(project, stageId);
   if (!stage) return;
-  const milestone = { id: uid(), name: "", date: null };
+  const milestone = { id: uid(), name: "", date: null, done: false };
   stage.milestones.push(milestone);
   pendingFocus = `milestone-name-${milestone.id}`;
   persistNow();
@@ -668,6 +655,16 @@ function deleteMilestone(projectId, milestoneId) {
     stage.milestones = stage.milestones.filter((milestone) => milestone.id !== milestoneId);
   }
   project.current = normalizeCurrent(project.current, project.stages);
+  persistNow();
+  render();
+}
+
+function toggleDone(projectId, milestoneId) {
+  const project = findProject(projectId);
+  const milestone = project && findMilestone(project, milestoneId);
+  if (!milestone) return;
+  milestone.done = !milestone.done;
+  pendingFocus = `done-${milestoneId}`;
   persistNow();
   render();
 }
@@ -736,13 +733,12 @@ function onChange(event) {
   if (!project) return;
   if (el.dataset.field === "stage-date") {
     setStageDate(project, el.dataset.stageId, el.value);
-    const clear = el.closest(".date-line") && el.closest(".date-line").querySelector("[data-action='clear-stage-date']");
-    if (clear) clear.hidden = !validDate(el.value);
+    el.classList.toggle("has-date", Boolean(validDate(el.value)));
   }
   if (el.dataset.field === "milestone-date") {
     setMilestoneDate(project, el.dataset.milestoneId, el.value);
-    const clear = el.closest(".date-line") && el.closest(".date-line").querySelector("[data-action='clear-milestone-date']");
-    if (clear) clear.hidden = !validDate(el.value);
+    const node = el.closest(".node");
+    if (node) node.classList.toggle("has-date", Boolean(validDate(el.value)));
   }
 }
 
@@ -769,6 +765,7 @@ function onClick(event) {
   else if (action === "delete-milestone") deleteMilestone(projectId, el.dataset.milestoneId);
   else if (action === "current-stage") setCurrent(projectId, "stage", el.dataset.stageId);
   else if (action === "current-milestone") setCurrent(projectId, "milestone", el.dataset.milestoneId);
+  else if (action === "toggle-done") toggleDone(projectId, el.dataset.milestoneId);
   else if (action === "clear-stage-date") {
     const project = findProject(projectId);
     if (project) {

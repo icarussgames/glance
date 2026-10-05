@@ -1,6 +1,6 @@
 # Glance
 
-A personal canvas of projects. Each project is a card with its name, the current stage or milestone, and the next important date. Open a card to edit stages, descriptions, milestones, and dates.
+A personal canvas of projects. Each project is a card with its name, the current stage or milestone, and the next important date. Open a card and the project fills the screen as stacked stage rows, with milestones running across each row.
 
 Drag empty canvas to move around. Drag a card to move that project. Pinch, or hold Ctrl (or Cmd) and scroll, to zoom. A mouse wheel zooms. A trackpad scroll pans.
 
