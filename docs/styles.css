@@ -897,6 +897,7 @@ body.panel-open .zoom {
 .wizard-count,
 .wizard-description,
 .wizard-milestone-name,
+.wizard-stage-date,
 .wizard-milestone-date {
   width: 100%;
   min-width: 0;
@@ -925,17 +926,77 @@ body.panel-open .zoom {
   font-size: 1rem;
 }
 
-.wizard-timeline {
+.wizard-when {
   display: grid;
   gap: 4px;
+  margin-bottom: 16px;
+}
+
+.wizard-when > span,
+.wizard-days-label {
+  color: var(--muted);
+  font-size: 0.8125rem;
+}
+
+.wizard-date-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.wizard-stage-date,
+.wizard-milestone-date {
+  flex: none;
+  width: 9.25rem;
+}
+
+.wizard-durations {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.wizard-duration {
+  min-width: 44px;
+  min-height: 36px;
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--stage);
+  color: var(--ink);
+  font-size: 0.875rem;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+.wizard-duration:hover,
+.wizard-duration:focus-visible {
+  border-color: var(--ink);
+  background: #efeae1;
+}
+
+.wizard-timeline {
+  display: grid;
+  gap: 10px;
   margin: 8px 0 4px;
 }
 
 .wizard-milestone {
   display: grid;
-  grid-template-columns: 16px minmax(0, 1fr) 9.25rem 28px;
-  gap: 8px;
+  grid-template-columns: 16px minmax(0, 1fr) 28px;
+  gap: 4px 8px;
   align-items: center;
+}
+
+.wizard-milestone-name {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.wizard-milestone .wizard-date-row {
+  grid-column: 2;
+  grid-row: 2;
 }
 
 .wizard-mark {
@@ -946,13 +1007,14 @@ body.panel-open .zoom {
   background: var(--surface);
 }
 
-.wizard-milestone-name,
-.wizard-milestone-date {
+.wizard-milestone-name {
   padding: 6px 0;
   font-size: 0.9375rem;
 }
 
 .wizard-remove {
+  grid-column: 3;
+  grid-row: 1 / span 2;
   width: 28px;
   height: 28px;
   border: 0;
@@ -1028,15 +1090,5 @@ body.panel-open .zoom {
 
   .wizard-heading h2 {
     font-size: 1.45rem;
-  }
-
-  .wizard-milestone {
-    grid-template-columns: 16px minmax(0, 1fr) 28px;
-  }
-
-  .wizard-milestone-date {
-    grid-column: 2;
-    grid-row: 2;
-    width: 9.25rem;
   }
 }

@@ -232,6 +232,15 @@ function todayISO() {
   return `${now.getFullYear()}-${month}-${day}`;
 }
 
+function addDays(iso, days) {
+  const parsed = validDate(iso) || todayISO();
+  const [year, month, day] = parsed.split("-").map(Number);
+  const date = new Date(year, month - 1, day + days);
+  const nextMonth = String(date.getMonth() + 1).padStart(2, "0");
+  const nextDay = String(date.getDate()).padStart(2, "0");
+  return `${date.getFullYear()}-${nextMonth}-${nextDay}`;
+}
+
 function formatDate(iso) {
   const [year, month, day] = iso.split("-").map(Number);
   return `${MONTHS[month - 1]} ${day}, ${year}`;
@@ -618,8 +627,29 @@ function wizardCount(value) {
   return count;
 }
 
-function blankWizardStage() {
-  return { name: "", description: "", milestones: [{ name: "", date: "" }] };
+function blankWizardMilestone(index, anchor) {
+  const base = validDate(anchor) || todayISO();
+  return {
+    name: `Milestone ${index + 1}`,
+    date: index === 0 ? base : addDays(base, 30),
+  };
+}
+
+function blankWizardStage(index, previousDate) {
+  const date = index === 0 ? todayISO() : addDays(previousDate || todayISO(), 30);
+  return {
+    name: `Stage ${index + 1}`,
+    description: "",
+    date,
+    milestones: [blankWizardMilestone(0, date)],
+  };
+}
+
+function wizardDurationHtml(action, index) {
+  const indexAttr = index == null ? "" : ` data-index="${index}"`;
+  return [30, 90, 180].map((days) => `
+    <button type="button" class="wizard-duration" data-action="${action}" data-days="${days}"${indexAttr} aria-label="${days} days">${days}</button>
+  `).join("");
 }
 
 function openWizard() {
@@ -702,7 +732,7 @@ function wizardHtml() {
 function wizardStartHtml() {
   const w = ui.wizard;
   return `
-    <p class="wizard-lead">Name the project, then walk through each stage and its milestones. Nothing is added until you finish.</p>
+    <p class="wizard-lead">Name the project and how many stages. Each stage starts named and dated, so you can click through and only change what you want. Nothing is added until you finish.</p>
     <label class="wizard-field">
       <span>Project name</span>
       <input class="wizard-name" type="text" data-wizard-field="project-name" data-wizard-focus="project-name" value="${esc(w.name)}" placeholder="Project name" maxlength="120" autocomplete="off">
@@ -719,7 +749,13 @@ function wizardStageHtml(stage) {
     <div class="wizard-milestone">
       <span class="wizard-mark" aria-hidden="true"></span>
       <input class="wizard-milestone-name" type="text" data-wizard-field="milestone-name" data-index="${index}" data-wizard-focus="${index === stage.milestones.length - 1 ? "milestone-new" : ""}" value="${esc(milestone.name)}" placeholder="Milestone" maxlength="160" aria-label="Milestone name" autocomplete="off">
-      <input class="wizard-milestone-date" type="date" data-wizard-field="milestone-date" data-index="${index}" value="${milestone.date ? esc(milestone.date) : ""}" aria-label="Milestone date">
+      <div class="wizard-date-row">
+        <input class="wizard-milestone-date" type="date" data-wizard-field="milestone-date" data-index="${index}" value="${milestone.date ? esc(milestone.date) : ""}" aria-label="Milestone date">
+        <div class="wizard-durations" role="group" aria-label="Days after the previous milestone">
+          <span class="wizard-days-label">days</span>
+          ${wizardDurationHtml("wizard-milestone-duration", index)}
+        </div>
+      </div>
       <button type="button" class="wizard-remove" data-action="wizard-remove-milestone" data-index="${index}" aria-label="Remove milestone"><span aria-hidden="true">×</span></button>
     </div>
   `).join("");
@@ -728,6 +764,16 @@ function wizardStageHtml(stage) {
       <span>Stage name</span>
       <input class="wizard-name" type="text" data-wizard-field="stage-name" data-wizard-focus="stage-name" value="${esc(stage.name)}" placeholder="Stage name" maxlength="160" autocomplete="off">
     </label>
+    <div class="wizard-when">
+      <span>Date</span>
+      <div class="wizard-date-row">
+        <input class="wizard-stage-date" type="date" data-wizard-field="stage-date" value="${stage.date ? esc(stage.date) : ""}" aria-label="Stage date">
+        <div class="wizard-durations" role="group" aria-label="Days after the previous stage">
+          <span class="wizard-days-label">days</span>
+          ${wizardDurationHtml("wizard-stage-duration")}
+        </div>
+      </div>
+    </div>
     <label class="wizard-field">
       <span>Description</span>
       <textarea class="wizard-description" data-wizard-field="stage-description" placeholder="Optional" maxlength="4000" rows="2">${esc(stage.description)}</textarea>
@@ -750,6 +796,7 @@ function readWizardFields() {
     else if (w.step > 0 && w.stages[w.step - 1]) {
       const stage = w.stages[w.step - 1];
       if (field === "stage-name") stage.name = el.value;
+      else if (field === "stage-date") stage.date = el.value;
       else if (field === "stage-description") stage.description = el.value;
       else if (field === "milestone-name" || field === "milestone-date") {
         const index = Number(el.dataset.index);
@@ -774,8 +821,40 @@ function rememberWizardField(el) {
 function ensureWizardStages(count) {
   const prev = ui.wizard.stages;
   const stages = [];
-  for (let i = 0; i < count; i += 1) stages.push(prev[i] || blankWizardStage());
+  for (let i = 0; i < count; i += 1) {
+    if (prev[i]) stages.push(prev[i]);
+    else stages.push(blankWizardStage(i, i > 0 ? stages[i - 1].date : null));
+  }
   ui.wizard.stages = stages;
+}
+
+function wizardAnchorDate(kind, index) {
+  const stageIndex = ui.wizard.step - 1;
+  const stage = ui.wizard.stages[stageIndex];
+  if (kind === "stage") {
+    if (stageIndex <= 0) return todayISO();
+    return validDate(ui.wizard.stages[stageIndex - 1].date) || todayISO();
+  }
+  if (index <= 0) return validDate(stage.date) || todayISO();
+  const previous = stage.milestones[index - 1];
+  return (previous && validDate(previous.date)) || validDate(stage.date) || todayISO();
+}
+
+function wizardApplyDuration(kind, index, days) {
+  if (!ui.wizard || ui.wizard.step < 1 || !Number.isFinite(days)) return;
+  readWizardFields();
+  const stage = ui.wizard.stages[ui.wizard.step - 1];
+  const next = addDays(wizardAnchorDate(kind, index), days);
+  if (kind === "stage") {
+    stage.date = next;
+    const input = wizardEl.querySelector("[data-wizard-field='stage-date']");
+    if (input) input.value = next;
+    return;
+  }
+  if (!stage.milestones[index]) return;
+  stage.milestones[index].date = next;
+  const input = wizardEl.querySelector(`[data-wizard-field='milestone-date'][data-index='${index}']`);
+  if (input) input.value = next;
 }
 
 function wizardNext() {
@@ -848,7 +927,12 @@ function wizardAddMilestone() {
   if (!ui.wizard || ui.wizard.step < 1) return;
   readWizardFields();
   const stage = ui.wizard.stages[ui.wizard.step - 1];
-  stage.milestones.push({ name: "", date: "" });
+  const index = stage.milestones.length;
+  const previous = index > 0 ? stage.milestones[index - 1] : null;
+  const anchor = previous
+    ? validDate(previous.date) || validDate(stage.date) || todayISO()
+    : validDate(stage.date) || todayISO();
+  stage.milestones.push(blankWizardMilestone(index, anchor));
   ui.wizard.error = "";
   ui.wizard.focus = "milestone-new";
   wizardEl.dataset.key = "";
@@ -874,7 +958,7 @@ function finishWizard() {
     id: uid(),
     name: stage.name.trim(),
     description: stage.description.trim(),
-    date: null,
+    date: validDate(stage.date),
     milestones: stage.milestones.filter((milestone) => milestone.name.trim()).map((milestone) => ({
       id: uid(),
       name: milestone.name.trim(),
@@ -1073,6 +1157,8 @@ function onClick(event) {
   else if (action === "wizard-back") wizardBack();
   else if (action === "wizard-next") wizardNext();
   else if (action === "wizard-add-milestone") wizardAddMilestone();
+  else if (action === "wizard-stage-duration") wizardApplyDuration("stage", 0, Number(el.dataset.days));
+  else if (action === "wizard-milestone-duration") wizardApplyDuration("milestone", Number(el.dataset.index), Number(el.dataset.days));
   else if (action === "wizard-remove-milestone") wizardRemoveMilestone(Number(el.dataset.index));
   else if (action === "collapse") collapse();
   else if (action === "add-stage") addStage(projectId);
