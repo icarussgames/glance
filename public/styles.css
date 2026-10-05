@@ -873,6 +873,17 @@ body.panel-open .zoom {
   overflow: hidden;
 }
 
+.wizard.is-board .wizard-card {
+  position: fixed;
+  top: var(--chrome-top, calc(max(16px, env(safe-area-inset-top)) + 58px));
+  right: max(14px, env(safe-area-inset-right));
+  bottom: max(14px, env(safe-area-inset-bottom));
+  left: max(14px, env(safe-area-inset-left));
+  width: auto;
+  max-width: none;
+  max-height: none;
+}
+
 .wizard-progress {
   height: 3px;
   background: #efeae1;
@@ -1012,6 +1023,7 @@ body.panel-open .zoom {
 
 .wizard-durations {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 6px;
 }
@@ -1035,53 +1047,169 @@ body.panel-open .zoom {
   background: #efeae1;
 }
 
-.wizard-timeline {
+.wizard-board {
+  flex: 1;
+  min-height: 0;
   display: grid;
-  gap: 10px;
-  margin: 8px 0 4px;
+  grid-template-columns: 248px minmax(0, 1fr);
+}
+
+.wizard-side {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  padding: 18px 16px 8px;
+  border-right: 1px solid var(--line);
+  background: #faf7f1;
+}
+
+.wizard-side h2 {
+  margin: 2px 0 14px;
+  font-size: 1.35rem;
+  font-weight: 650;
+  letter-spacing: -0.03em;
+  line-height: 1.15;
+}
+
+.wizard-side .wizard-back {
+  margin-top: 4px;
+}
+
+.wizard-stage-scroll {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding-top: 4px;
+}
+
+.wizard-stage-row {
+  display: grid;
+  grid-template-columns: minmax(240px, 420px) minmax(0, 1fr);
+  gap: 8px 16px;
+  align-items: start;
+  min-height: 128px;
+  padding: 16px 52px 18px 18px;
+  border-bottom: 1px solid var(--line);
+}
+
+.wizard-stage-name {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  padding: 2px 0 4px;
+  font-size: 1.25rem;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+}
+
+.wizard-desc {
+  margin-top: 8px;
+}
+
+.wizard-desc summary {
+  width: fit-content;
+  color: var(--muted);
+  font-size: 0.8125rem;
+  cursor: pointer;
+}
+
+.wizard-desc summary:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+
+.wizard.is-board .wizard-description {
+  min-height: 2.6rem;
+  margin-top: 6px;
+  color: var(--ink);
+  font-size: 0.875rem;
+}
+
+.wizard-stage-track {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+  gap: 12px;
+  min-width: 0;
+  min-height: 112px;
+  padding: 6px 4px 8px 0;
+  overflow-x: auto;
+}
+
+.wizard-stage-track::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 44px;
+  top: 50%;
+  height: 1px;
+  background: #d9d1c3;
+  pointer-events: none;
+}
+
+.wizard-stage-track:not(:has(.wizard-milestone))::before {
+  display: none;
 }
 
 .wizard-milestone {
-  display: grid;
-  grid-template-columns: 16px minmax(0, 1fr) 28px;
-  gap: 4px 8px;
-  align-items: center;
-}
-
-.wizard-milestone-name {
-  grid-column: 2;
-  grid-row: 1;
-}
-
-.wizard-milestone .wizard-date-row {
-  grid-column: 2;
-  grid-row: 2;
-}
-
-.wizard-mark {
-  width: 14px;
-  height: 14px;
-  border: 1.5px solid var(--ink);
-  border-radius: 2px;
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  flex: 0 0 auto;
+  width: 16.75rem;
+  padding: 8px 10px 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
   background: var(--surface);
 }
 
+.wizard-milestone-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
 .wizard-milestone-name {
-  padding: 6px 0;
+  flex: 1;
+  width: auto;
+  min-width: 0;
+  padding: 4px 0;
   font-size: 0.9375rem;
+  font-weight: 600;
 }
 
 .wizard-remove {
-  grid-column: 3;
-  grid-row: 1 / span 2;
   width: 28px;
   height: 28px;
+  flex: none;
   border: 0;
   border-radius: 6px;
   background: transparent;
   color: var(--muted);
   font-size: 1.15rem;
   line-height: 1;
+}
+
+.wizard-add-milestone {
+  align-self: center;
+  position: relative;
+  z-index: 1;
+  flex: none;
+  background: var(--surface);
+}
+
+.wizard.is-board .wizard-close {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 2;
+  margin: 0;
 }
 
 .wizard-remove:hover,
@@ -1149,5 +1277,28 @@ body.panel-open .zoom {
 
   .wizard-heading h2 {
     font-size: 1.45rem;
+  }
+
+  .wizard-board {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .wizard-side {
+    flex: 0 1 auto;
+    max-height: 42%;
+    min-height: 0;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .wizard-stage-scroll {
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+
+  .wizard-stage-row {
+    grid-template-columns: minmax(0, 1fr);
+    padding-right: 16px;
   }
 }

@@ -2,7 +2,7 @@
 
 A personal canvas of projects. Each project is a card with its name, the current stage or milestone, and the next important date. Open a card and the project fills the screen as stacked stage rows, with milestones running across each row.
 
-New project starts a blank card. Dates are written as YYYY-MM-DD. Add project (assisted) asks for a name, a project start (day 1), and a stage count, then one screen per stage. Each new date starts where the previous stage or milestone left off. +30, +90, and +180 add that many days to the date shown, and Day 1 returns it to the project start.
+New project starts a blank card. Dates are written as YYYY-MM-DD. Add project (assisted) asks for a name, a project start (day 1), and a stage count, then opens every stage at once in a wide window. Each new date starts where the previous stage or milestone left off. +30, +90, and +180 add that many days to the date shown, and Day 1 returns it to the project start. Changing the stage count adds or removes rows.
 
 Drag empty canvas to move around. Drag a card to move that project. Pinch, or hold Ctrl (or Cmd) and scroll, to zoom. A mouse wheel zooms. A trackpad scroll pans.
 
