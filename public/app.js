@@ -21,7 +21,10 @@ const app = document.querySelector("#app");
 const ui = {
   confirmDelete: false,
   reveal: false,
+  wizard: null,
 };
+
+const MAX_WIZARD_STAGES = 30;
 
 let state = loadState();
 let pendingFocus = null;
@@ -36,6 +39,7 @@ let world;
 let panel;
 let empty;
 let zoomLabel;
+let wizardEl;
 
 function uid() {
   if (globalThis.crypto && typeof crypto.randomUUID === "function") return crypto.randomUUID();
@@ -404,6 +408,7 @@ function render() {
   syncTitle();
   applyCamera();
   restoreFocus(previous);
+  presentWizard();
   if (ui.reveal && project) {
     ui.reveal = false;
     reveal(project);
@@ -453,6 +458,13 @@ function focusElement(id) {
 function syncTitle() {
   const project = activeProject();
   document.title = project ? `Glance · ${project.name.trim() || "Untitled project"}` : "Glance";
+}
+
+function placeChrome() {
+  const bar = document.querySelector(".bar");
+  if (!bar) return;
+  const top = Math.ceil(bar.getBoundingClientRect().bottom + 12);
+  document.documentElement.style.setProperty("--chrome-top", `${top}px`);
 }
 
 function applyCamera() {
@@ -598,6 +610,296 @@ function collapse() {
   render();
 }
 
+function wizardCount(value) {
+  const text = String(value == null ? "" : value).trim();
+  if (!/^[1-9]\d*$/.test(text)) return null;
+  const count = Number(text);
+  if (count > MAX_WIZARD_STAGES) return null;
+  return count;
+}
+
+function blankWizardStage() {
+  return { name: "", description: "", milestones: [{ name: "", date: "" }] };
+}
+
+function openWizard() {
+  ui.wizard = {
+    step: 0,
+    name: "",
+    countText: "",
+    stages: [],
+    error: "",
+    focus: "project-name",
+  };
+  presentWizard();
+}
+
+function closeWizard() {
+  ui.wizard = null;
+  presentWizard();
+  const el = focusElement("add-project-assisted");
+  if (el) el.focus();
+}
+
+function presentWizard() {
+  if (!wizardEl) return;
+  if (!ui.wizard) {
+    wizardEl.hidden = true;
+    wizardEl.innerHTML = "";
+    wizardEl.dataset.key = "";
+    return;
+  }
+  const stage = ui.wizard.step > 0 ? ui.wizard.stages[ui.wizard.step - 1] : null;
+  const key = `${ui.wizard.step}:${ui.wizard.stages.length}:${stage ? stage.milestones.length : 0}:${ui.wizard.error}`;
+  if (wizardEl.dataset.key === key && !wizardEl.hidden) return;
+  const focus = ui.wizard.focus;
+  wizardEl.hidden = false;
+  wizardEl.dataset.key = key;
+  wizardEl.innerHTML = wizardHtml();
+  const el = wizardEl.querySelector(`[data-wizard-focus="${focus}"]`) || wizardEl.querySelector("[data-wizard-focus]");
+  if (el) el.focus();
+}
+
+function wizardHtml() {
+  const w = ui.wizard;
+  const total = w.stages.length;
+  const onStage = w.step > 0;
+  const last = onStage && w.step === total;
+  const stage = onStage ? w.stages[w.step - 1] : null;
+  const kicker = onStage ? `Stage ${w.step} of ${total}` : "Assisted";
+  const title = onStage ? `Stage ${w.step}` : "New project";
+  const progress = onStage ? Math.round((w.step / total) * 100) : 8;
+  const note = w.error ? `<p class="wizard-note" role="alert">${esc(w.error)}</p>` : "";
+  const back = onStage
+    ? `<button type="button" class="button button-quiet" data-action="wizard-back">Back</button>`
+    : "";
+  return `
+    <div class="wizard-scrim" data-action="wizard-cancel"></div>
+    <div class="wizard-card" role="dialog" aria-modal="true" aria-labelledby="wizard-title">
+      <div class="wizard-progress" aria-hidden="true"><span style="width:${progress}%"></span></div>
+      <div class="wizard-top">
+        <div class="wizard-heading">
+          <p class="wizard-kicker">${esc(kicker)}</p>
+          <h2 id="wizard-title">${esc(title)}</h2>
+        </div>
+        <button type="button" class="wizard-close" data-action="wizard-cancel" aria-label="Close"><span aria-hidden="true">×</span></button>
+      </div>
+      <div class="wizard-body">
+        ${note}
+        ${onStage ? wizardStageHtml(stage) : wizardStartHtml()}
+      </div>
+      <div class="wizard-foot">
+        <button type="button" class="text-button" data-action="wizard-cancel">Cancel</button>
+        <div class="wizard-nav">
+          ${back}
+          <button type="button" class="button" data-action="wizard-next">${last ? "Finish" : "Next"}</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function wizardStartHtml() {
+  const w = ui.wizard;
+  return `
+    <p class="wizard-lead">Name the project, then walk through each stage and its milestones. Nothing is added until you finish.</p>
+    <label class="wizard-field">
+      <span>Project name</span>
+      <input class="wizard-name" type="text" data-wizard-field="project-name" data-wizard-focus="project-name" value="${esc(w.name)}" placeholder="Project name" maxlength="120" autocomplete="off">
+    </label>
+    <label class="wizard-field">
+      <span>Number of stages</span>
+      <input class="wizard-count" type="text" inputmode="numeric" data-wizard-field="stage-count" data-wizard-focus="stage-count" value="${esc(w.countText)}" placeholder="3" maxlength="2" autocomplete="off">
+    </label>
+  `;
+}
+
+function wizardStageHtml(stage) {
+  const rows = stage.milestones.map((milestone, index) => `
+    <div class="wizard-milestone">
+      <span class="wizard-mark" aria-hidden="true"></span>
+      <input class="wizard-milestone-name" type="text" data-wizard-field="milestone-name" data-index="${index}" data-wizard-focus="${index === stage.milestones.length - 1 ? "milestone-new" : ""}" value="${esc(milestone.name)}" placeholder="Milestone" maxlength="160" aria-label="Milestone name" autocomplete="off">
+      <input class="wizard-milestone-date" type="date" data-wizard-field="milestone-date" data-index="${index}" value="${milestone.date ? esc(milestone.date) : ""}" aria-label="Milestone date">
+      <button type="button" class="wizard-remove" data-action="wizard-remove-milestone" data-index="${index}" aria-label="Remove milestone"><span aria-hidden="true">×</span></button>
+    </div>
+  `).join("");
+  return `
+    <label class="wizard-field">
+      <span>Stage name</span>
+      <input class="wizard-name" type="text" data-wizard-field="stage-name" data-wizard-focus="stage-name" value="${esc(stage.name)}" placeholder="Stage name" maxlength="160" autocomplete="off">
+    </label>
+    <label class="wizard-field">
+      <span>Description</span>
+      <textarea class="wizard-description" data-wizard-field="stage-description" placeholder="Optional" maxlength="4000" rows="2">${esc(stage.description)}</textarea>
+    </label>
+    <div class="wizard-timeline-label">Milestones</div>
+    <div class="wizard-timeline">
+      ${rows || `<p class="quiet">No milestones yet.</p>`}
+    </div>
+    <button type="button" class="text-button" data-action="wizard-add-milestone">Add milestone</button>
+  `;
+}
+
+function readWizardFields() {
+  const w = ui.wizard;
+  if (!w || !wizardEl) return;
+  wizardEl.querySelectorAll("[data-wizard-field]").forEach((el) => {
+    const field = el.dataset.wizardField;
+    if (field === "project-name") w.name = el.value;
+    else if (field === "stage-count") w.countText = el.value;
+    else if (w.step > 0 && w.stages[w.step - 1]) {
+      const stage = w.stages[w.step - 1];
+      if (field === "stage-name") stage.name = el.value;
+      else if (field === "stage-description") stage.description = el.value;
+      else if (field === "milestone-name" || field === "milestone-date") {
+        const index = Number(el.dataset.index);
+        if (!stage.milestones[index]) return;
+        if (field === "milestone-name") stage.milestones[index].name = el.value;
+        else stage.milestones[index].date = el.value;
+      }
+    }
+  });
+}
+
+function rememberWizardField(el) {
+  if (!ui.wizard || !el.dataset.wizardField) return;
+  readWizardFields();
+  if (ui.wizard.error) {
+    ui.wizard.error = "";
+    const note = wizardEl.querySelector(".wizard-note");
+    if (note) note.hidden = true;
+  }
+}
+
+function ensureWizardStages(count) {
+  const prev = ui.wizard.stages;
+  const stages = [];
+  for (let i = 0; i < count; i += 1) stages.push(prev[i] || blankWizardStage());
+  ui.wizard.stages = stages;
+}
+
+function wizardNext() {
+  if (!ui.wizard) return;
+  readWizardFields();
+  const w = ui.wizard;
+  if (w.step === 0) {
+    if (!w.name.trim()) {
+      w.error = "Name the project to continue.";
+      w.focus = "project-name";
+      wizardEl.dataset.key = "";
+      presentWizard();
+      return;
+    }
+    const count = wizardCount(w.countText);
+    if (!count) {
+      w.error = "Enter a number of stages from 1 to 30.";
+      w.focus = "stage-count";
+      wizardEl.dataset.key = "";
+      presentWizard();
+      return;
+    }
+    ensureWizardStages(count);
+    w.step = 1;
+    w.error = "";
+    w.focus = "stage-name";
+    wizardEl.dataset.key = "";
+    presentWizard();
+    return;
+  }
+  const stage = w.stages[w.step - 1];
+  if (!stage.name.trim()) {
+    w.error = "Name this stage to continue.";
+    w.focus = "stage-name";
+    wizardEl.dataset.key = "";
+    presentWizard();
+    return;
+  }
+  const unnamed = stage.milestones.some((milestone) => !milestone.name.trim() && (milestone.date || validDate(milestone.date)));
+  if (unnamed) {
+    w.error = "Name each milestone, or remove it.";
+    w.focus = "milestone-new";
+    wizardEl.dataset.key = "";
+    presentWizard();
+    return;
+  }
+  stage.milestones = stage.milestones.filter((milestone) => milestone.name.trim());
+  if (w.step >= w.stages.length) {
+    finishWizard();
+    return;
+  }
+  w.step += 1;
+  w.error = "";
+  w.focus = "stage-name";
+  wizardEl.dataset.key = "";
+  presentWizard();
+}
+
+function wizardBack() {
+  if (!ui.wizard || ui.wizard.step < 1) return;
+  readWizardFields();
+  ui.wizard.error = "";
+  ui.wizard.step -= 1;
+  ui.wizard.focus = ui.wizard.step === 0 ? "project-name" : "stage-name";
+  wizardEl.dataset.key = "";
+  presentWizard();
+}
+
+function wizardAddMilestone() {
+  if (!ui.wizard || ui.wizard.step < 1) return;
+  readWizardFields();
+  const stage = ui.wizard.stages[ui.wizard.step - 1];
+  stage.milestones.push({ name: "", date: "" });
+  ui.wizard.error = "";
+  ui.wizard.focus = "milestone-new";
+  wizardEl.dataset.key = "";
+  presentWizard();
+}
+
+function wizardRemoveMilestone(index) {
+  if (!ui.wizard || ui.wizard.step < 1) return;
+  readWizardFields();
+  const stage = ui.wizard.stages[ui.wizard.step - 1];
+  if (!stage.milestones[index]) return;
+  stage.milestones.splice(index, 1);
+  ui.wizard.error = "";
+  ui.wizard.focus = "stage-name";
+  wizardEl.dataset.key = "";
+  presentWizard();
+}
+
+function finishWizard() {
+  const w = ui.wizard;
+  const point = placePoint();
+  const stages = w.stages.map((stage) => ({
+    id: uid(),
+    name: stage.name.trim(),
+    description: stage.description.trim(),
+    date: null,
+    milestones: stage.milestones.filter((milestone) => milestone.name.trim()).map((milestone) => ({
+      id: uid(),
+      name: milestone.name.trim(),
+      date: validDate(milestone.date),
+      done: false,
+    })),
+  }));
+  const project = {
+    id: uid(),
+    name: w.name.trim(),
+    x: point.x,
+    y: point.y,
+    current: stages.length ? { kind: "stage", id: stages[0].id } : null,
+    stages,
+  };
+  state.projects.push(project);
+  state.openId = project.id;
+  ui.confirmDelete = false;
+  ui.reveal = true;
+  ui.wizard = null;
+  pendingFocus = "project-name";
+  persistNow();
+  render();
+}
+
 function addProject() {
   const point = placePoint();
   const project = {
@@ -706,6 +1008,10 @@ function deleteProject() {
 
 function onInput(event) {
   const el = event.target;
+  if (el.dataset.wizardField) {
+    rememberWizardField(el);
+    return;
+  }
   const field = el.dataset.field;
   if (!field || field.endsWith("-date")) return;
   const project = findProject(el.dataset.projectId);
@@ -729,6 +1035,10 @@ function onInput(event) {
 
 function onChange(event) {
   const el = event.target;
+  if (el.dataset.wizardField) {
+    rememberWizardField(el);
+    return;
+  }
   const project = findProject(el.dataset.projectId);
   if (!project) return;
   if (el.dataset.field === "stage-date") {
@@ -758,6 +1068,12 @@ function onClick(event) {
   const projectId = el.dataset.projectId || state.openId;
   const action = el.dataset.action;
   if (action === "add-project") addProject();
+  else if (action === "add-project-assisted") openWizard();
+  else if (action === "wizard-cancel") closeWizard();
+  else if (action === "wizard-back") wizardBack();
+  else if (action === "wizard-next") wizardNext();
+  else if (action === "wizard-add-milestone") wizardAddMilestone();
+  else if (action === "wizard-remove-milestone") wizardRemoveMilestone(Number(el.dataset.index));
   else if (action === "collapse") collapse();
   else if (action === "add-stage") addStage(projectId);
   else if (action === "add-milestone") addMilestone(projectId, el.dataset.stageId);
@@ -798,6 +1114,10 @@ function onClick(event) {
 
 function onKeyDown(event) {
   if (event.key === "Escape") {
+    if (ui.wizard) {
+      closeWizard();
+      return;
+    }
     if (ui.confirmDelete) {
       ui.confirmDelete = false;
       pendingFocus = "ask-delete-project";
@@ -813,15 +1133,15 @@ function onKeyDown(event) {
     openProject(card.dataset.projectId);
     return;
   }
-  const inControl = typingTarget(event.target) || (event.target.closest && event.target.closest("button, .card"));
-  if (inControl && event.code === "Space") return;
+  const inControl = typingTarget(event.target) || (event.target.closest && event.target.closest("button, .card, .wizard"));
+  if ((inControl || ui.wizard) && event.code === "Space") return;
   if (event.code === "Space") {
     event.preventDefault();
     spaceDown = true;
     document.body.classList.add("is-space");
     return;
   }
-  if (typingTarget(event.target)) return;
+  if (ui.wizard || typingTarget(event.target)) return;
   if (event.key === "+" || event.key === "=") zoomAroundCenter(1.12);
   if (event.key === "-" || event.key === "_") zoomAroundCenter(1 / 1.12);
   if (event.key === "0") resetZoom();
@@ -1002,6 +1322,7 @@ function mount() {
     <header class="bar">
       <h1 class="wordmark">Glance</h1>
       <button type="button" class="button" data-action="add-project">New project</button>
+      <button type="button" class="button button-quiet" data-action="add-project-assisted" data-focus-id="add-project-assisted">Add project (assisted)</button>
     </header>
     <div class="zoom" aria-label="Zoom">
       <button type="button" data-action="zoom-out" aria-label="Zoom out">−</button>
@@ -1012,10 +1333,14 @@ function mount() {
       <div class="empty-card">
         <h2>No projects yet</h2>
         <p>Add a project to put it on the canvas. Click a project to open it, and drag it to move it.</p>
-        <button type="button" class="button" data-action="add-project">Add a project</button>
+        <div class="empty-actions">
+          <button type="button" class="button" data-action="add-project">Add a project</button>
+          <button type="button" class="button button-quiet" data-action="add-project-assisted">Add project (assisted)</button>
+        </div>
       </div>
     </div>
     <aside id="panel" class="panel" hidden aria-label="Project"></aside>
+    <div id="wizard" class="wizard" hidden></div>
     <p class="warning" role="alert"${persistOk ? " hidden" : ""}>This browser blocked saving. Your changes will disappear on reload.</p>
   `;
   canvas = document.querySelector("#canvas");
@@ -1023,6 +1348,7 @@ function mount() {
   panel = document.querySelector("#panel");
   empty = document.querySelector("#empty");
   zoomLabel = document.querySelector(".zoom-label");
+  wizardEl = document.querySelector("#wizard");
 
   app.addEventListener("click", onClick);
   app.addEventListener("input", onInput);
@@ -1047,7 +1373,11 @@ function mount() {
     else refreshFromStorage();
   });
   window.addEventListener("pagehide", persistNow);
-  window.addEventListener("resize", applyCamera);
+  window.addEventListener("resize", () => {
+    placeChrome();
+    applyCamera();
+  });
+  placeChrome();
   render();
 }
 

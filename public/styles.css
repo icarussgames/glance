@@ -195,7 +195,9 @@ body.is-space .card {
 .bar {
   top: max(16px, env(safe-area-inset-top));
   left: max(16px, env(safe-area-inset-left));
-  gap: 12px;
+  flex-wrap: wrap;
+  gap: 8px;
+  max-width: calc(100% - 32px);
   padding: 6px 6px 6px 14px;
 }
 
@@ -254,6 +256,13 @@ body.is-space .card {
   color: var(--muted);
 }
 
+.empty-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  pointer-events: auto;
+}
+
 .empty-card .button {
   pointer-events: auto;
 }
@@ -265,7 +274,7 @@ body.panel-open .zoom {
 .panel {
   position: fixed;
   z-index: 4;
-  top: calc(max(16px, env(safe-area-inset-top)) + 58px);
+  top: var(--chrome-top, calc(max(16px, env(safe-area-inset-top)) + 58px));
   right: max(14px, env(safe-area-inset-right));
   bottom: max(14px, env(safe-area-inset-bottom));
   left: max(14px, env(safe-area-inset-left));
@@ -776,6 +785,203 @@ body.panel-open .zoom {
   margin: 48px auto;
 }
 
+.wizard {
+  position: fixed;
+  inset: 0;
+  z-index: 5;
+  display: grid;
+  place-items: center;
+  padding: max(16px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom));
+}
+
+.wizard-scrim {
+  position: absolute;
+  inset: 0;
+  background: rgba(28, 25, 20, 0.28);
+}
+
+.wizard-card {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  width: min(36rem, 100%);
+  max-height: 100%;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  box-shadow: 0 22px 50px rgba(28, 25, 20, 0.16);
+  overflow: hidden;
+}
+
+.wizard-progress {
+  height: 3px;
+  background: #efeae1;
+}
+
+.wizard-progress span {
+  display: block;
+  height: 100%;
+  background: var(--fill);
+}
+
+.wizard-top {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 18px 20px 0;
+}
+
+.wizard-kicker {
+  color: var(--muted);
+  font-size: 0.8125rem;
+}
+
+.wizard-heading h2 {
+  margin-top: 2px;
+  font-size: 1.75rem;
+  font-weight: 650;
+  letter-spacing: -0.03em;
+  line-height: 1.15;
+}
+
+.wizard-close {
+  width: 36px;
+  height: 36px;
+  margin-left: auto;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 1.35rem;
+  line-height: 1;
+}
+
+.wizard-close:hover,
+.wizard-close:focus-visible {
+  background: var(--stage);
+  color: var(--ink);
+}
+
+.wizard-body {
+  overflow: auto;
+  padding: 16px 22px 8px;
+}
+
+.wizard-lead,
+.wizard-note {
+  margin-bottom: 16px;
+}
+
+.wizard-lead {
+  color: var(--muted);
+}
+
+.wizard-note {
+  color: var(--danger);
+}
+
+.wizard-field {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 16px;
+}
+
+.wizard-field span,
+.wizard-timeline-label {
+  color: var(--muted);
+  font-size: 0.8125rem;
+}
+
+.wizard-name,
+.wizard-count,
+.wizard-description,
+.wizard-milestone-name,
+.wizard-milestone-date {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+  padding: 8px 0;
+}
+
+.wizard-name {
+  font-size: 1.35rem;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+}
+
+.wizard-count {
+  max-width: 6rem;
+  font-size: 1.25rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.wizard-description {
+  min-height: 4.2rem;
+  resize: vertical;
+  font-size: 1rem;
+}
+
+.wizard-timeline {
+  display: grid;
+  gap: 4px;
+  margin: 8px 0 4px;
+}
+
+.wizard-milestone {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) 9.25rem 28px;
+  gap: 8px;
+  align-items: center;
+}
+
+.wizard-mark {
+  width: 14px;
+  height: 14px;
+  border: 1.5px solid var(--ink);
+  border-radius: 2px;
+  background: var(--surface);
+}
+
+.wizard-milestone-name,
+.wizard-milestone-date {
+  padding: 6px 0;
+  font-size: 0.9375rem;
+}
+
+.wizard-remove {
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 1.15rem;
+  line-height: 1;
+}
+
+.wizard-remove:hover,
+.wizard-remove:focus-visible {
+  color: var(--danger);
+  background: #f6e8e4;
+}
+
+.wizard-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 18px 16px;
+}
+
+.wizard-nav {
+  display: flex;
+  gap: 8px;
+}
+
 @media (max-width: 720px) {
   .panel {
     border-radius: 12px;
@@ -818,5 +1024,19 @@ body.panel-open .zoom {
 
   .bar .button {
     min-height: 44px;
+  }
+
+  .wizard-heading h2 {
+    font-size: 1.45rem;
+  }
+
+  .wizard-milestone {
+    grid-template-columns: 16px minmax(0, 1fr) 28px;
+  }
+
+  .wizard-milestone-date {
+    grid-column: 2;
+    grid-row: 2;
+    width: 9.25rem;
   }
 }

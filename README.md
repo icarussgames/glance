@@ -2,6 +2,8 @@
 
 A personal canvas of projects. Each project is a card with its name, the current stage or milestone, and the next important date. Open a card and the project fills the screen as stacked stage rows, with milestones running across each row.
 
+New project starts a blank card. Add project (assisted) asks for a name and a stage count, then one screen per stage, and only then creates the card.
+
 Drag empty canvas to move around. Drag a card to move that project. Pinch, or hold Ctrl (or Cmd) and scroll, to zoom. A mouse wheel zooms. A trackpad scroll pans.
 
 There is no account and no server. What you add stays in this browser (`localStorage`). The first visit is empty until you add a project.
