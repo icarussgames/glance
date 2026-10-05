@@ -390,7 +390,7 @@ body.panel-open .zoom {
   background: transparent;
   resize: none;
   field-sizing: content;
-  min-height: 0;
+  min-height: 1.4em;
   max-height: 4.6em;
   overflow: auto;
   color: var(--muted);
@@ -399,25 +399,18 @@ body.panel-open .zoom {
 }
 
 .stage-description:placeholder-shown {
-  height: 0;
-  min-height: 0;
-  margin-top: 0;
-  overflow: hidden;
-}
-
-.stage-row:hover .stage-description:placeholder-shown,
-.stage-description:focus {
-  height: auto;
+  field-sizing: fixed;
+  height: 1.4em;
   min-height: 1.4em;
-  margin-top: 2px;
-  overflow: auto;
+  overflow: hidden;
 }
 
 .stage-description::placeholder {
   color: transparent;
 }
 
-.stage-description:focus::placeholder {
+.stage-row:hover .stage-description::placeholder,
+.stage-row:focus-within .stage-description::placeholder {
   color: #5e584e;
 }
 
@@ -428,24 +421,12 @@ body.panel-open .zoom {
 }
 
 .stage-date-control:not(.has-date) {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
+  opacity: 0;
 }
 
-.stage-label:hover .stage-date-control,
-.stage-label:focus-within .stage-date-control {
-  position: static;
-  width: auto;
-  height: auto;
-  margin: 4px 0 0 24px;
-  overflow: visible;
-  clip: auto;
-  white-space: normal;
+.stage-label:hover .stage-date-control:not(.has-date),
+.stage-label:focus-within .stage-date-control:not(.has-date) {
+  opacity: 1;
 }
 
 .stage-date {
@@ -1256,9 +1237,7 @@ body.panel-open .zoom {
   }
 
 .stage-description,
-.stage-date-control,
-.stage-label:hover .stage-date-control,
-.stage-label:focus-within .stage-date-control {
+.stage-date-control {
   margin-left: 0;
 }
 
